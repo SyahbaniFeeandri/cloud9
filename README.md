@@ -1,6 +1,6 @@
-# FinCloud
+# cloud9-fincloudApp
 
-Cloud-Based Financial Management and Monitoring Platform.
+Cloud-Based Financial Management and Monitoring Platform (FinCloud).
 
 ## Service
 - fincloud-frontend
