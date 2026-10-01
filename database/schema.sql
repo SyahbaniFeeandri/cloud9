@@ -1,6 +1,6 @@
 -- ============================================
 -- FinCloud Database Schema
--- PostgreSQL 16
+-- MariaDB
 -- ============================================
 
 CREATE TABLE roles (
