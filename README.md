@@ -1,6 +1,6 @@
-# FinCloud
+# cloud9-fincloudApp
 
-Cloud-Based Financial Management and Monitoring Platform.
+Cloud-Based Financial Management and Monitoring Platform (FinCloud).
 
 ## Service
 - fincloud-frontend
@@ -13,6 +13,17 @@ Cloud-Based Financial Management and Monitoring Platform.
 ## Prasyarat
 - Docker
 - Docker Compose
+
+## Struktur Project 
+```text
+fincloud-app/
+├── backend/
+├── frontend/
+├── database/
+├── docs/
+├── infra/
+├── scripts/
+└── tests/
 
 ## Cara Menjalankan
 ```bash
