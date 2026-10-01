@@ -14,6 +14,17 @@ Cloud-Based Financial Management and Monitoring Platform.
 - Docker
 - Docker Compose
 
+## Struktur Project 
+```text
+fincloud-app/
+├── backend/
+├── frontend/
+├── database/
+├── docs/
+├── infra/
+├── scripts/
+└── tests/
+
 ## Cara Menjalankan
 ```bash
 cp .env.example .env
