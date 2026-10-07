@@ -1,0 +1,20 @@
+{
+  "name": "fincloud-frontend",
+  "version": "1.0.0",
+  "description": "FinCloud - Cloud-Based Financial Management and Monitoring Platform Frontend UI",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx -y serve . -l 3000",
+    "dev": "npx -y serve . -l 3000",
+    "preview": "npx -y serve . -l 3000"
+  },
+  "keywords": [
+    "fincloud",
+    "financial",
+    "dashboard",
+    "transactions",
+    "reports"
+  ],
+  "author": "FinCloud Team",
+  "license": "MIT"
+}

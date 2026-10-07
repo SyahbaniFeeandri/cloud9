@@ -1,0 +1,283 @@
+/* FinCloud Transactions Page Styles */
+
+.transactions-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Filter & Action Toolbar */
+.tx-toolbar {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.tx-toolbar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.search-box {
+  flex: 1;
+  min-width: 260px;
+  max-width: 420px;
+}
+
+.tx-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.tx-filters-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Type Filter Pills */
+.type-pills {
+  display: flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.2rem;
+}
+
+.type-pill-btn {
+  padding: 0.35rem 0.85rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+}
+
+.type-pill-btn.active {
+  background: var(--primary-600);
+  color: #ffffff;
+}
+
+.type-pill-btn.active.income {
+  background: var(--income-600);
+}
+
+.type-pill-btn.active.expense {
+  background: var(--expense-600);
+}
+
+/* Category Filter & Date Filter */
+.filter-select {
+  padding: 0.45rem 2rem 0.45rem 0.85rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+/* Summary Quick Chips */
+.tx-summary-chips {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.tx-summary-chip b {
+  color: var(--text-main);
+}
+
+/* Table Container */
+.tx-table-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* Receipt Badge / Button */
+.receipt-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-md);
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--primary-400);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.receipt-badge:hover {
+  background: rgba(99, 102, 241, 0.25);
+  transform: translateY(-1px);
+}
+
+.receipt-badge.empty {
+  background: var(--bg-card-subtle);
+  color: var(--text-faint);
+  border-color: var(--border-subtle);
+  cursor: default;
+}
+.receipt-badge.empty:hover {
+  transform: none;
+}
+
+/* Action Dropdown / Action Buttons in Table */
+.tx-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.btn-table-action {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
+}
+
+.btn-table-action:hover {
+  background: var(--bg-card-subtle);
+  color: var(--text-main);
+  border-color: var(--border-color);
+}
+
+.btn-table-action.delete:hover {
+  background: rgba(244, 63, 94, 0.15);
+  color: var(--expense-500);
+  border-color: rgba(244, 63, 94, 0.3);
+}
+
+/* Pagination */
+.table-pagination {
+  padding: 1rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.page-num-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card-subtle);
+  transition: all var(--transition-fast);
+}
+
+.page-num-btn:hover {
+  color: var(--text-main);
+  border-color: var(--border-color);
+}
+
+.page-num-btn.active {
+  background: var(--primary-600);
+  color: #fff;
+  border-color: var(--primary-600);
+}
+
+/* Type Switcher in Form */
+.type-toggle-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.type-toggle-btn {
+  padding: 0.85rem;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--border-color);
+  background: var(--bg-card-subtle);
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+}
+
+.type-toggle-btn.active.income {
+  border-color: var(--income-500);
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--income-500);
+}
+
+.type-toggle-btn.active.expense {
+  border-color: var(--expense-500);
+  background: rgba(244, 63, 94, 0.12);
+  color: var(--expense-500);
+}
+
+/* Preview Image in Receipt Modal */
+.receipt-preview-box {
+  width: 100%;
+  max-height: 480px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.receipt-preview-img {
+  max-width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+}
+
+.receipt-file-badge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.85rem;
+  background: var(--bg-card-hover);
+  border-radius: var(--radius-md);
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+}
