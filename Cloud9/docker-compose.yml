@@ -1,8 +1,8 @@
 services:
   nginx:
-    image: nginx:latest
-    container_name: nginx-lab
+    image: nginx:alpine
+    container_name: fincloud-frontend-preview
     ports:
       - "8080:80"
     volumes:
-      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ../frontend:/usr/share/nginx/html:ro

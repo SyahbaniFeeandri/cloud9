@@ -171,7 +171,7 @@ export const DashboardModule = {
                   <p class="empty-state-desc">Mulai catat transaksi pertama Anda untuk melihat statistik</p>
                 </div>
               ` : transactions.map(t => `
-                <div class="mini-tx-item">
+                <div class="mini-tx-item" data-id="${t.id}" style="cursor: pointer;" title="Klik untuk lihat transaksi">
                   <div class="mini-tx-left">
                     <div class="mini-tx-icon ${t.type}">
                       ${t.type === 'income' ? `
@@ -186,7 +186,7 @@ export const DashboardModule = {
                         <span class="badge ${t.type === 'income' ? 'badge-income' : 'badge-expense'}">${t.category}</span>
                         <span>&bull;</span>
                         <span>${FinStore.formatDate(t.date)}</span>
-                        ${t.receipt ? '<span class="receipt-badge" title="Struk terlampir"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg> Struk</span>' : ''}
+                        ${t.receipt ? `<button class="receipt-badge btn-dashboard-receipt" data-id="${t.id}" title="Struk terlampir" style="border:none; cursor:pointer;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg> Struk</button>` : ''}
                       </div>
                     </div>
                   </div>
@@ -296,6 +296,29 @@ export const DashboardModule = {
       viewAllChartBtn.addEventListener('click', () => router.navigate('/reports'));
     }
 
+    // Mini recent activity item clicks
+    document.querySelectorAll('.mini-tx-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.btn-dashboard-receipt')) return;
+        const id = item.getAttribute('data-id');
+        const tx = FinStore.getTransactions().find(t => t.id === id);
+        if (tx && window.openTransactionModal) {
+          window.openTransactionModal(tx);
+        }
+      });
+    });
+
+    document.querySelectorAll('.btn-dashboard-receipt').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        const tx = FinStore.getTransactions().find(t => t.id === id);
+        if (tx && tx.receipt && window.openReceiptModal) {
+          window.openReceiptModal(tx);
+        }
+      });
+    });
+
     if (!this._resizeAttached) {
       window.addEventListener('resize', () => {
         if (document.getElementById('cashflow-canvas')) {
@@ -398,13 +421,37 @@ export const DashboardModule = {
     const outerRadius = 85;
     const innerRadius = 55;
 
-    const data = [
-      { label: 'Housing', value: 3200000, color: '#eab308' },
-      { label: 'Food', value: 1250000, color: '#f43f5e' },
-      { label: 'Utilities', value: 850000, color: '#14b8a6' },
-      { label: 'Transportation', value: 420000, color: '#f97316' },
-      { label: 'Healthcare & Lainnya', value: 630000, color: '#a855f7' }
-    ];
+    // Dynamically calculate from real transactions in FinStore
+    const categoryColors = {
+      'Housing': '#eab308',
+      'Food': '#f43f5e',
+      'Utilities': '#14b8a6',
+      'Transportation': '#f97316',
+      'Healthcare': '#ec4899',
+      'Entertainment': '#a855f7',
+      'Shopping': '#06b6d4',
+      'Education': '#3b82f6',
+      'Other': '#64748b'
+    };
+
+    const expenseTx = FinStore.getTransactions().filter(t => t.type === 'expense');
+    let data = [];
+
+    if (expenseTx.length > 0) {
+      const groups = {};
+      expenseTx.forEach(t => {
+        groups[t.category] = (groups[t.category] || 0) + t.amount;
+      });
+      data = Object.keys(groups).map(cat => ({
+        label: cat,
+        value: groups[cat],
+        color: categoryColors[cat] || '#8b5cf6'
+      })).sort((a, b) => b.value - a.value).slice(0, 5);
+    } else {
+      data = [
+        { label: 'Belum Ada', value: 1, color: '#334155' }
+      ];
+    }
 
     const total = data.reduce((a, b) => a + b.value, 0);
     let startAngle = -Math.PI / 2;
@@ -412,7 +459,7 @@ export const DashboardModule = {
     ctx.clearRect(0, 0, 220, 220);
 
     data.forEach(item => {
-      const sliceAngle = (item.value / total) * 2 * Math.PI;
+      const sliceAngle = total > 0 ? (item.value / total) * 2 * Math.PI : 0;
       ctx.beginPath();
       ctx.arc(centerX, centerY, outerRadius, startAngle, startAngle + sliceAngle);
       ctx.arc(centerX, centerY, innerRadius, startAngle + sliceAngle, startAngle, true);

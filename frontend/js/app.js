@@ -157,6 +157,7 @@ class FinCloudApp {
     // Sidebar navigation clicks
     document.querySelectorAll('.nav-item').forEach(item => {
       item.addEventListener('click', (e) => {
+        e.preventDefault();
         const route = e.currentTarget.getAttribute('data-route');
         if (route) {
           router.navigate(route);
