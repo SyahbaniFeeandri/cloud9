@@ -1,0 +1,27 @@
+services:
+  nginx:
+    image: nginx:latest
+    container_name: nginx-lab
+    ports:
+      - "8080:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+    depends_on:
+      - mariadb
+
+  mariadb:
+    image: mariadb:11
+    container_name: mariadb-lab
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: "GantiRootPass_123!"
+      MARIADB_DATABASE: webdb
+      MARIADB_USER: webuser
+      MARIADB_PASSWORD: "GantiWebPass_123!"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+volumes:
+  mariadb_data:
+
+#fixing
