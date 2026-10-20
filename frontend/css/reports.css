@@ -1,0 +1,215 @@
+/* FinCloud Reports Page Styles */
+
+.reports-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+/* Report Header Control Bar */
+.report-header-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+}
+
+.report-title-info h3 {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-main);
+  letter-spacing: -0.01em;
+}
+
+.report-title-info p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+.report-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* Period Pills */
+.period-pills {
+  display: flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.2rem;
+}
+
+.period-pill {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.period-pill.active {
+  background: var(--primary-600);
+  color: #fff;
+}
+
+/* Executive Financial Summary Grid */
+.report-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1.25rem;
+}
+
+.report-metric-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.report-metric-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.report-metric-val {
+  font-size: 1.65rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text-main);
+}
+
+.report-metric-val.income {
+  color: var(--income-500);
+}
+
+.report-metric-val.expense {
+  color: var(--expense-500);
+}
+
+.report-metric-val.net {
+  color: var(--accent-cyan);
+}
+
+.report-metric-sub {
+  font-size: 0.75rem;
+  color: var(--text-faint);
+}
+
+/* Report Visual Analytics (2-col grid) */
+.report-analytics-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1.4fr;
+  gap: 1.5rem;
+}
+
+/* Category Spending Ranked Bars */
+.category-rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.15rem;
+}
+
+.category-rank-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.category-rank-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.category-rank-name {
+  font-weight: 600;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.category-rank-values {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.category-rank-amount {
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.category-rank-pct {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  width: 40px;
+  text-align: right;
+}
+
+.rank-bar-bg {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-card-subtle);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.rank-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, var(--expense-500), var(--accent-purple));
+  transition: width 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Print / PDF Mode */
+@media print {
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .sidebar, .top-header, .report-controls, .banner-actions, .tx-toolbar, #toast-container {
+    display: none !important;
+  }
+  .main-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  .page-view {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+  .card, .stat-card, .report-header-card, .report-metric-card {
+    border: 1px solid #ccc !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .report-metric-val, .card-title, .data-table th, .data-table td {
+    color: #000 !important;
+  }
+}
+
+@media (max-width: 992px) {
+  .report-analytics-grid {
+    grid-template-columns: 1fr;
+  }
+}

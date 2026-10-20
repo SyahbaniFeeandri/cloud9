@@ -1,0 +1,8 @@
+flowchart LR
+    Guest((Guest))
+    Register([Register])
+    Login([Login])
+
+    Guest --> Register
+    Guest --> Login
+    Register -. setelah sukses .-> Login
