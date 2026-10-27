@@ -1,4 +1,4 @@
-# FinCloud - Cloud-Based Financial Management & Monitoring Platform
+# Cloud9 - Cloud-Based Financial Management & Monitoring Platform
 > **Developed by Team Cloud9**
 
 [![Frontend](https://img.shields.io/badge/Frontend-HTML5%20%7C%20Vanilla%20CSS%20%7C%20ES6%20JS-E34F26?style=flat-square&logo=html5&logoColor=white)](file:///c:/Users/Feeandri/cloud9-fincloudApp/frontend)
@@ -10,7 +10,7 @@
 
 ---
 
-## 📌 Tentang FinCloud
+## 📌 Tentang Cloud9
 
 **FinCloud** adalah platform manajemen dan pemantauan keuangan pribadi serta tim yang dirancang dengan arsitektur *cloud-native*. FinCloud memberikan visibilitas menyeluruh terhadap arus kas (*cash flow*), pencatatan transaksi masuk dan keluar, penyimpanan digital bukti transaksi (struk pembayaran/faktur) ke object storage berbasis S3, laporan analitik keuangan interaktif, serta kesiapan integrasi monitoring kesehatan infrastruktur cloud secara *real-time*.
 
