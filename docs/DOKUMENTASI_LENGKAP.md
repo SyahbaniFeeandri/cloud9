@@ -5,9 +5,26 @@
 
 ## 1. Ringkasan Eksekutif (Executive Summary)
 
+### 1.1 Gambaran Umum Proyek
+
 **FinCloud** adalah platform manajemen dan monitoring keuangan pribadi/tim berbasis arsitektur *cloud-native*. Proyek ini dirancang untuk memberikan visibilitas penuh terhadap arus kas (*cash flow*), pencatatan transaksi masuk dan keluar, pengunggahan serta pengelolaan bukti transaksi (struk/invoice), analisis laporan keuangan interaktif, dan pemantauan kesehatan infrastruktur cloud secara *real-time*.
 
 Proyek ini dikembangkan oleh tim **Cloud9** yang mencakup integrasi antara antarmuka web modern (*Single Page Application*), skema basis data relasional MariaDB, perancangan arsitektur kontainerisasi Docker, serta perencanaan integrasi metrik Prometheus dan visualisasi Grafana.
+
+### 1.2 Tim Pengembang
+
+Berikut adalah susunan tim pengembang proyek FinCloud beserta branch kerja dan tanggung jawab perannya:
+
+| No | Nama | Branch | Peran |
+|:--:|---|---|---|
+| 1 | **Muhammad Feeandri Syahbani** | `FeeandriDev` | Database Engineer & Cloud Security Engineer |
+| 2 | **Arby Putra** | `ArbyDev` | Storage & Reliability Engineer |
+| 3 | **Muhammad Farrel Gustiawan** | `BojongDev` | Backend/API Developer |
+| 4 | **Yasmin Akmaliyah** | `YasminDev` | QA, Integration & Documentation Engineer |
+| 5 | **Farelly DeRossi** | `BejekDev` | Frontend Lead |
+| 6 | **Agustina Elsi Bunga** | `IraDev` | Cloud Infrastructure Engineer |
+| 7 | **Kenjiro Boantua H.G** | `KenjiroDev` | DevOps & Container Engineer |
+| 8 | **Ihsanul Farrel** | `ElloDev` | Monitoring & Logging Engineer |
 
 ---
 
@@ -164,8 +181,9 @@ docker compose up -d
 - **Branch Utama**:
   - `main`: Branch produksi siap rilis.
   - `develop`: Branch integrasi utama seluruh fitur tim.
-- **Branch Fitur**:
-  - Format penamaan: `feature/<nama-fitur>` atau `<NamaDev>` (contoh: `FeeandriDev`, `ArbyDev`, `JepsDev`).
+- **Branch Fitur & Personal**:
+  - Branch personal masing-masing anggota: `FeeandriDev`, `ArbyDev`, `BojongDev`, `YasminDev`, `BejekDev`, `IraDev`, `KenjiroDev`, `ElloDev`.
+  - Format penamaan fitur opsional: `feature/<nama-fitur>`.
 - **Prinsip Kontribusi**:
   - Selalu lakukan `git pull origin develop` sebelum membuat branch baru.
   - Selesaikan merge conflict dengan memverifikasi perubahan antar tim sebelum melakukan push.
