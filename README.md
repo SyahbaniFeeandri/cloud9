@@ -18,6 +18,23 @@ Platform ini mengusung pendekatan antarmuka modern yang ringan dan responsif tan
 
 ---
 
+## 👥 Tim Pengembang (Team Cloud9)
+
+Berikut adalah pembagian peran dan branch kerja masing-masing anggota tim pengembang:
+
+| No | Nama | Branch | Peran |
+|:--:|---|---|---|
+| 1 | **Muhammad Feeandri Syahbani** | `FeeandriDev` | Database Engineer & Cloud Security Engineer |
+| 2 | **Arby Putra** | `ArbyDev` | Storage & Reliability Engineer |
+| 3 | **Muhammad Farrel Gustiawan** | `BojongDev` | Backend/API Developer |
+| 4 | **Yasmin Akmaliyah** | `YasminDev` | QA, Integration & Documentation Engineer |
+| 5 | **Farelly DeRossi** | `BejekDev` | Frontend Lead |
+| 6 | **Agustina Elsi Bunga** | `IraDev` | Cloud Infrastructure Engineer |
+| 7 | **Kenjiro Boantua H.G** | `KenjiroDev` | DevOps & Container Engineer |
+| 8 | **Ihsanul Farrel** | `ElloDev` | Monitoring & Logging Engineer |
+
+---
+
 ## ✨ Fitur Utama
 
 ### 1. 🔐 Autentikasi Pengguna & Akses Berbasis Peran (RBAC)
@@ -258,7 +275,8 @@ Mengikuti panduan [`docs/04-branching-rules.md`](file:///c:/Users/Feeandri/cloud
   - `main`: Kode stabil siap rilis/produksi.
   - `develop`: Pusat integrasi seluruh fitur yang telah selesai diuji.
 - **Branch Pengembang**:
-  - Format penamaan fitur: `feature/<nama-fitur>` atau branch developer seperti `FeeandriDev`, `ArbyDev`, `JepsDev`.
+  - Branch personal masing-masing anggota: `FeeandriDev`, `ArbyDev`, `BojongDev`, `YasminDev`, `BejekDev`, `IraDev`, `KenjiroDev`, `ElloDev`.
+  - Format branch fitur opsional: `feature/<nama-fitur>`.
 - **Workflow**:
   1. Selalu lakukan `git pull origin develop` sebelum membuat perubahan.
   2. Lakukan pengujian mandiri sebelum membuat Pull Request ke `develop`.
