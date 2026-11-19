@@ -13,7 +13,9 @@ export function authenticateToken(req, res, next) {
 
   jwt.verify(token, process.env.JWT_SECRET || 'fincloud_super_secret_jwt_key_2026_cloud9', (err, user) => {
     if (err) {
-      return res.status(403).json({
+      // 401 lets the client distinguish an expired/invalid session from a
+      // genuine role-based 403 (insufficient permissions).
+      return res.status(401).json({
         success: false,
         message: 'Invalid or expired token'
       });

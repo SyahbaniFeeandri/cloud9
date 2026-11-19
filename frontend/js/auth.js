@@ -6,6 +6,28 @@
 import { FinStore } from './store.js';
 import { router } from './router.js';
 
+function friendlyAuthError(error) {
+  const message = (error?.message || '').toLowerCase();
+
+  if (error?.status === 401 || message.includes('invalid credentials')) {
+    return 'Email atau kata sandi salah.';
+  }
+  if (message.includes('already registered')) {
+    return 'Email sudah terdaftar. Silakan login.';
+  }
+  if (message.includes('required')) {
+    return 'Semua kolom wajib diisi.';
+  }
+  if (message.includes('econnrefused') || message.includes('connect')) {
+    return 'Server tidak dapat terhubung ke database. Silakan coba lagi nanti.';
+  }
+  if (error?.status === 0) {
+    return error.message;
+  }
+
+  return error?.message || 'Terjadi kesalahan. Silakan coba lagi.';
+}
+
 export const AuthModule = {
   renderAuthPage(isRegister = false) {
     const container = document.getElementById('auth-container-root');
@@ -54,7 +76,7 @@ export const AuthModule = {
                   <div class="preview-stat-info">
                     <h5>Status Infrastruktur</h5>
                     <p style="font-size: 1.05rem; color: #10b981; display:flex; align-items:center; gap:0.4rem;">
-                      <span class="pulse-dot"></span> PostgreSQL & MinIO Normal
+                      <span class="pulse-dot"></span> MariaDB & MinIO Normal
                     </p>
                   </div>
                   <span class="brand-badge">99.98% SLA</span>
@@ -64,7 +86,7 @@ export const AuthModule = {
 
             <div class="auth-hero-footer">
               <span>&copy; 2026 Cloud9 FinCloud</span>
-              <span>PostgreSQL &bull; MinIO &bull; JWT Auth</span>
+              <span>MariaDB &bull; MinIO &bull; JWT Auth</span>
             </div>
           </div>
 
@@ -109,7 +131,7 @@ export const AuthModule = {
                     <span class="input-icon">
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
                     </span>
-                    <input type="email" id="input-auth-email" class="form-input has-left-icon" placeholder="nama@fincloud.app" value="${isRegister ? '' : 'feeandri@fincloud.app'}" required />
+                    <input type="email" id="input-auth-email" class="form-input has-left-icon" placeholder="nama@fincloud.local" value="${isRegister ? '' : 'user@fincloud.local'}" required />
                   </div>
                   <span class="form-error-msg" id="error-auth-email">Format email tidak valid</span>
                 </div>
@@ -158,10 +180,10 @@ export const AuthModule = {
                 </div>
                 <div class="demo-btn-group">
                   <button type="button" class="demo-account-pill" id="btn-demo-user">
-                    Feeandri <span>Role: USER</span>
+                    Andi FinCloud <span>Role: USER</span>
                   </button>
                   <button type="button" class="demo-account-pill" id="btn-demo-admin">
-                    Admin FinCloud <span>Role: ADMIN</span>
+                    System Administrator <span>Role: ADMIN</span>
                   </button>
                 </div>
               </div>
@@ -201,43 +223,46 @@ export const AuthModule = {
       });
     }
 
-    // Demo user buttons
+    // Demo user buttons (real API login using the database seed accounts)
     const demoUser = document.getElementById('btn-demo-user');
     const demoAdmin = document.getElementById('btn-demo-admin');
 
-    if (demoUser) {
-      demoUser.addEventListener('click', () => {
-        FinStore.setUser({
-          id: 1,
-          name: 'Feeandri',
-          email: 'feeandri@fincloud.app',
-          role: 'USER'
-        });
-        window.showToast('Login berhasil sebagai USER (Feeandri)', 'success');
+    const loginAsDemo = async (email, password, label, button) => {
+      if (button) button.disabled = true;
+
+      try {
+        const user = await FinStore.login(email, password);
+        window.showToast(`Login berhasil sebagai ${label} (${user.name})`, 'success');
         router.navigate('/dashboard');
-      });
+      } catch (error) {
+        window.showToast(friendlyAuthError(error), 'error');
+      } finally {
+        if (button) button.disabled = false;
+      }
+    };
+
+    if (demoUser) {
+      demoUser.addEventListener('click', () =>
+        loginAsDemo('user@fincloud.local', 'password123', 'USER', demoUser)
+      );
     }
 
     if (demoAdmin) {
-      demoAdmin.addEventListener('click', () => {
-        FinStore.setUser({
-          id: 99,
-          name: 'Administrator FinCloud',
-          email: 'admin@fincloud.app',
-          role: 'ADMIN'
-        });
-        window.showToast('Login berhasil sebagai ADMIN', 'success');
-        router.navigate('/dashboard');
-      });
+      demoAdmin.addEventListener('click', () =>
+        loginAsDemo('admin@fincloud.local', 'password123', 'ADMIN', demoAdmin)
+      );
     }
 
     // Form submit
     const form = document.getElementById('auth-main-form');
     if (form) {
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
+
         const email = document.getElementById('input-auth-email').value.trim();
         const pw = document.getElementById('input-auth-password').value;
+        const submitBtn = document.getElementById('btn-auth-submit');
+        const originalText = submitBtn ? submitBtn.innerHTML : '';
 
         if (isRegister) {
           const name = document.getElementById('input-auth-name').value.trim();
@@ -247,34 +272,57 @@ export const AuthModule = {
             window.showToast('Silakan isi nama Anda', 'error');
             return;
           }
+          if (pw.length < 6) {
+            window.showToast('Kata sandi minimal 6 karakter', 'error');
+            return;
+          }
           if (pw !== pwConfirm) {
             window.showToast('Konfirmasi kata sandi tidak cocok!', 'error');
             return;
           }
 
-          FinStore.setUser({
-            id: Date.now(),
-            name: name,
-            email: email,
-            role: 'USER'
-          });
-          window.showToast('Registrasi berhasil! Selamat datang di FinCloud, ' + name, 'success');
-          router.navigate('/dashboard');
-        } else {
-          // Login
-          if (!email || !pw) {
-            window.showToast('Silakan lengkapi email dan kata sandi', 'error');
-            return;
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = 'Mendaftarkan...';
           }
-          const defaultName = email.split('@')[0];
-          FinStore.setUser({
-            id: 1,
-            name: defaultName.charAt(0).toUpperCase() + defaultName.slice(1),
-            email: email,
-            role: email.toLowerCase().includes('admin') ? 'ADMIN' : 'USER'
-          });
-          window.showToast('Login berhasil! Selamat datang kembali.', 'success');
+
+          try {
+            const user = await FinStore.register(name, email, pw);
+            window.showToast(`Registrasi berhasil! Selamat datang, ${user.name}`, 'success');
+            router.navigate('/dashboard');
+          } catch (error) {
+            window.showToast(friendlyAuthError(error), 'error');
+          } finally {
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.innerHTML = originalText;
+            }
+          }
+          return;
+        }
+
+        // Login
+        if (!email || !pw) {
+          window.showToast('Silakan lengkapi email dan kata sandi', 'error');
+          return;
+        }
+
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = 'Memproses...';
+        }
+
+        try {
+          const user = await FinStore.login(email, pw);
+          window.showToast(`Login berhasil! Selamat datang kembali, ${user.name}.`, 'success');
           router.navigate('/dashboard');
+        } catch (error) {
+          window.showToast(friendlyAuthError(error), 'error');
+        } finally {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+          }
         }
       });
     }

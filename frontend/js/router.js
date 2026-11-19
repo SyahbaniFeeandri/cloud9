@@ -45,15 +45,21 @@ class Router {
     }
 
     const routeConfig = routes[hash];
-    const user = FinStore.getUser();
+    const authenticated = FinStore.isAuthenticated();
+    const user = authenticated ? FinStore.getUser() : null;
+
+    // Clear stale/expired tokens before applying the auth guard.
+    if (!authenticated && FinStore.getToken()) {
+      FinStore.clearSession();
+    }
 
     // Check auth guards
-    if (routeConfig.authRequired && !user) {
+    if (routeConfig.authRequired && !authenticated) {
       this.navigate('/login');
       return;
     }
 
-    if (!routeConfig.authRequired && user && (hash === '/login' || hash === '/register')) {
+    if (!routeConfig.authRequired && authenticated && (hash === '/login' || hash === '/register')) {
       // Already logged in, redirect to dashboard
       this.navigate('/dashboard');
       return;

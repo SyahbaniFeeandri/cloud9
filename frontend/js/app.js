@@ -16,32 +16,62 @@ class FinCloudApp {
     this.currentTxEditingId = null;
     this.currentReceiptFile = null;
     this.currentReceiptDataUrl = null;
+    this.currentReceiptFileObject = null;
+    this.currentRemoveReceipt = false;
+    this._sessionVerified = false;
+    this._handlingUnauthorized = false;
   }
 
   init() {
-    // 1. Initialize Theme
+    // 1. Remove data persisted by the old localStorage-only prototype.
+    FinStore.clearLegacyMockData();
+
+    // 2. Initialize Theme
     const currentTheme = FinStore.getTheme();
     FinStore.setTheme(currentTheme);
 
-    // 2. Setup Global Helpers
+    // 3. Setup Global Helpers
     window.showToast = this.showToast.bind(this);
     window.openTransactionModal = this.openTransactionModal.bind(this);
     window.closeTransactionModal = this.closeTransactionModal.bind(this);
     window.openReceiptModal = this.openReceiptModal.bind(this);
     window.closeReceiptModal = this.closeReceiptModal.bind(this);
 
-    // 3. Setup Navigation & Layout listeners
+    // 4. Central session-expiry handler (dispatched by api.js on HTTP 401).
+    window.addEventListener('fincloud:unauthorized', (event) => {
+      this.handleUnauthorized(event.detail);
+    });
+
+    // 5. Setup Navigation & Layout listeners
     this.bindGlobalEvents();
 
-    // 4. Listen to route changes
+    // 6. Listen to route changes
     router.onRouteChange((hash, user) => this.handleRouteChange(hash, user));
 
-    // 5. Start router
+    // 7. Start router
     router.init();
   }
 
-  handleRouteChange(hash, user) {
-    const appContainer = document.getElementById('app');
+  handleUnauthorized(detail = {}) {
+    if (this._handlingUnauthorized) return;
+
+    this._handlingUnauthorized = true;
+    this._sessionVerified = false;
+    FinStore.clearSession();
+
+    const message = detail.message === 'Invalid or expired token'
+      ? 'Sesi Anda telah berakhir. Silakan login kembali.'
+      : detail.message || 'Sesi Anda telah berakhir. Silakan login kembali.';
+
+    this.showToast(message, 'error');
+    router.navigate('/login');
+
+    setTimeout(() => {
+      this._handlingUnauthorized = false;
+    }, 1200);
+  }
+
+  async handleRouteChange(hash, user) {
     const authRoot = document.getElementById('auth-container-root');
     const dashboardRoot = document.getElementById('dashboard-app-root');
 
@@ -56,6 +86,11 @@ class FinCloudApp {
     }
 
     // Route is Authenticated Workspace
+    if (!FinStore.isAuthenticated()) {
+      router.navigate('/login');
+      return;
+    }
+
     if (authRoot) authRoot.style.display = 'none';
     if (dashboardRoot) dashboardRoot.style.display = 'flex';
 
@@ -91,20 +126,90 @@ class FinCloudApp {
       }
     }
 
-    // Render corresponding view
-    if (hash === '/dashboard') {
-      DashboardModule.render();
-    } else if (hash === '/transactions') {
-      TransactionsModule.render();
-    } else if (hash === '/reports') {
-      ReportsModule.render();
-    } else if (hash === '/profile') {
-      this.renderProfilePage();
-    }
-
     // Scroll to top of content
     const mainEl = document.querySelector('.main-content');
     if (mainEl) mainEl.scrollTop = 0;
+
+    this.showViewLoading();
+
+    try {
+      // Validate the token against the backend once per page load.
+      if (!this._sessionVerified) {
+        await FinStore.verifySession();
+        this._sessionVerified = true;
+        this.updateUserBadge(FinStore.getUser());
+      }
+
+      if (hash === '/dashboard') {
+        await DashboardModule.render();
+      } else if (hash === '/transactions') {
+        await TransactionsModule.render();
+      } else if (hash === '/reports') {
+        await ReportsModule.render();
+      } else if (hash === '/profile') {
+        await this.renderProfilePage();
+      }
+    } catch (error) {
+      if (error?.status === 401) return; // handled by fincloud:unauthorized
+
+      console.error('Route render error:', error);
+      this.renderLoadError(error);
+    }
+  }
+
+  showViewLoading() {
+    const container = document.getElementById('view-content');
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="view-loading">
+        <div class="loading-spinner"></div>
+        <p>Memuat data dari server FinCloud...</p>
+      </div>
+    `;
+  }
+
+  renderLoadError(error) {
+    const container = document.getElementById('view-content');
+    if (!container) return;
+
+    const message = error?.message || 'Terjadi kesalahan saat memuat data.';
+
+    container.innerHTML = `
+      <div class="view-error">
+        <div class="empty-state-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </div>
+        <h4 class="empty-state-title">Gagal memuat data</h4>
+        <p class="empty-state-desc">${message}</p>
+        <button class="btn btn-primary" id="btn-retry-view" style="margin-top:1rem;">Coba Lagi</button>
+      </div>
+    `;
+
+    const retryBtn = document.getElementById('btn-retry-view');
+    if (retryBtn) {
+      retryBtn.addEventListener('click', () => router.handleRouting());
+    }
+  }
+
+  async refreshCurrentView() {
+    try {
+      if (router.currentRoute === '/dashboard') {
+        await DashboardModule.render();
+      } else if (router.currentRoute === '/transactions') {
+        await TransactionsModule.render();
+      } else if (router.currentRoute === '/reports') {
+        await ReportsModule.render();
+      }
+    } catch (error) {
+      if (error?.status !== 401) {
+        this.showToast(error.message || 'Gagal memperbarui tampilan', 'error');
+      }
+    }
   }
 
   updateUserBadge(user) {
@@ -113,7 +218,7 @@ class FinCloudApp {
     const roleEls = document.querySelectorAll('.user-display-role');
     const avatarEls = document.querySelectorAll('.user-avatar');
 
-    nameEls.forEach(el => el.textContent = user.name || 'Feeandri');
+    nameEls.forEach(el => el.textContent = user.name || 'Pengguna');
     roleEls.forEach(el => el.textContent = user.role || 'USER');
     avatarEls.forEach(el => {
       const initial = (user.name || 'F').charAt(0).toUpperCase();
@@ -132,7 +237,11 @@ class FinCloudApp {
         this.updateThemeButtonIcon(next);
         // re-render charts to update contrast if on dashboard
         if (router.currentRoute === '/dashboard') {
-          DashboardModule.render();
+          DashboardModule.render().catch((error) => {
+            if (error?.status !== 401) {
+              this.showToast(error.message || 'Gagal memperbarui grafik', 'error');
+            }
+          });
         }
       });
       this.updateThemeButtonIcon(FinStore.getTheme());
@@ -169,10 +278,13 @@ class FinCloudApp {
     // Logout
     const logoutBtn = document.getElementById('btn-sidebar-logout');
     if (logoutBtn) {
-      logoutBtn.addEventListener('click', () => {
-        FinStore.logout();
+      logoutBtn.addEventListener('click', async () => {
+        logoutBtn.disabled = true;
+        await FinStore.logout();
+        this._sessionVerified = false;
         this.showToast('Anda telah keluar dari FinCloud', 'info');
         router.navigate('/login');
+        logoutBtn.disabled = false;
       });
     }
 
@@ -232,6 +344,8 @@ class FinCloudApp {
     this.currentTxEditingId = txData ? txData.id : null;
     this.currentReceiptDataUrl = txData ? txData.receipt : null;
     this.currentReceiptFile = txData ? txData.receiptName : null;
+    this.currentReceiptFileObject = null;
+    this.currentRemoveReceipt = false;
 
     const modalTitle = document.getElementById('modal-tx-title');
     const typeBtnIncome = document.getElementById('modal-toggle-income');
@@ -269,6 +383,8 @@ class FinCloudApp {
     this.currentTxEditingId = null;
     this.currentReceiptFile = null;
     this.currentReceiptDataUrl = null;
+    this.currentReceiptFileObject = null;
+    this.currentRemoveReceipt = false;
   }
 
   setModalType(type) {
@@ -301,10 +417,18 @@ class FinCloudApp {
     if (!dropzoneContent) return;
 
     if (this.currentReceiptDataUrl) {
+      const isPdf = /\.pdf$/i.test(this.currentReceiptFile || '') ||
+        /\.pdf(?:$|[?#])/i.test(String(this.currentReceiptDataUrl)) ||
+        String(this.currentReceiptDataUrl).startsWith('data:application/pdf');
+
+      const thumb = isPdf
+        ? `<div style="width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:6px; border:1px solid var(--border-color); background:rgba(244,63,94,0.1); color:var(--expense-500); font-size:0.7rem; font-weight:700;">PDF</div>`
+        : `<img src="${this.currentReceiptDataUrl}" style="width:50px; height:50px; object-fit:cover; border-radius:6px; border:1px solid var(--border-color);" />`;
+
       dropzoneContent.innerHTML = `
         <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; width:100%;">
           <div style="display:flex; align-items:center; gap:0.75rem;">
-            <img src="${this.currentReceiptDataUrl}" style="width:50px; height:50px; object-fit:cover; border-radius:6px; border:1px solid var(--border-color);" />
+            ${thumb}
             <div style="text-align:left;">
               <div style="font-size:0.85rem; font-weight:600;">${this.currentReceiptFile || 'struk-terlampir.jpg'}</div>
               <div style="font-size:0.72rem; color:var(--income-500);">Tersimpan di Cloud Storage (MinIO)</div>
@@ -320,6 +444,8 @@ class FinCloudApp {
           e.stopPropagation();
           this.currentReceiptDataUrl = null;
           this.currentReceiptFile = null;
+          this.currentReceiptFileObject = null;
+          this.currentRemoveReceipt = true;
           this.updateModalReceiptPreview();
         });
       }
@@ -332,6 +458,31 @@ class FinCloudApp {
         <p class="dropzone-subtext">JPG, PNG, atau PDF (Disimpan via MinIO Bucket)</p>
       `;
     }
+  }
+
+  handleReceiptFile(file) {
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!allowedTypes.includes(file.type)) {
+      this.showToast('Format struk harus JPG, PNG, WEBP, atau PDF', 'error');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      this.showToast('Ukuran struk maksimal 10 MB', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      this.currentReceiptDataUrl = event.target.result;
+      this.currentReceiptFile = file.name;
+      this.currentReceiptFileObject = file;
+      this.currentRemoveReceipt = false;
+      this.updateModalReceiptPreview();
+    };
+    reader.readAsDataURL(file);
   }
 
   setupTransactionModalEvents() {
@@ -360,21 +511,14 @@ class FinCloudApp {
       typeExpense.addEventListener('click', () => this.setModalType('expense'));
     }
 
-    // Dropzone upload simulation
+    // Dropzone upload
     if (dropzone && fileInput) {
       dropzone.addEventListener('click', () => fileInput.click());
 
       fileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            this.currentReceiptDataUrl = event.target.result;
-            this.currentReceiptFile = file.name;
-            this.updateModalReceiptPreview();
-          };
-          reader.readAsDataURL(file);
-        }
+        this.handleReceiptFile(file);
+        fileInput.value = '';
       });
 
       // Drag & drop
@@ -387,22 +531,16 @@ class FinCloudApp {
         e.preventDefault();
         dropzone.classList.remove('dragover');
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-          const file = e.dataTransfer.files[0];
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            this.currentReceiptDataUrl = event.target.result;
-            this.currentReceiptFile = file.name;
-            this.updateModalReceiptPreview();
-          };
-          reader.readAsDataURL(file);
+          this.handleReceiptFile(e.dataTransfer.files[0]);
         }
       });
     }
 
     // Form submission
     if (form) {
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
+
         const isIncome = typeIncome.classList.contains('active');
         const amount = parseFloat(document.getElementById('modal-input-amount').value);
         const category = document.getElementById('modal-select-category').value;
@@ -425,27 +563,42 @@ class FinCloudApp {
           category,
           description,
           date,
-          receipt: this.currentReceiptDataUrl,
-          receiptName: this.currentReceiptFile
+          receiptFile: this.currentReceiptFileObject,
+          removeReceipt: this.currentRemoveReceipt
         };
 
-        if (this.currentTxEditingId) {
-          FinStore.updateTransaction(this.currentTxEditingId, payload);
-          this.showToast('Transaksi berhasil diperbarui!', 'success');
-        } else {
-          FinStore.addTransaction(payload);
-          this.showToast('Transaksi baru berhasil disimpan!', 'success');
+        const saveBtn = document.getElementById('btn-save-modal-tx');
+        const originalText = saveBtn ? saveBtn.innerHTML : '';
+        if (saveBtn) {
+          saveBtn.disabled = true;
+          saveBtn.innerHTML = 'Menyimpan...';
         }
 
-        this.closeTransactionModal();
+        try {
+          let result;
+          if (this.currentTxEditingId) {
+            result = await FinStore.updateTransaction(this.currentTxEditingId, payload);
+            this.showToast('Transaksi berhasil diperbarui!', 'success');
+          } else {
+            result = await FinStore.addTransaction(payload);
+            this.showToast('Transaksi baru berhasil disimpan!', 'success');
+          }
 
-        // Refresh current active view
-        if (router.currentRoute === '/dashboard') {
-          DashboardModule.render();
-        } else if (router.currentRoute === '/transactions') {
-          TransactionsModule.render();
-        } else if (router.currentRoute === '/reports') {
-          ReportsModule.render();
+          if (result?.receiptError) {
+            this.showToast(`Struk gagal diunggah: ${result.receiptError}`, 'error');
+          }
+
+          this.closeTransactionModal();
+          await this.refreshCurrentView();
+        } catch (error) {
+          if (error?.status !== 401) {
+            this.showToast(error.message || 'Gagal menyimpan transaksi', 'error');
+          }
+        } finally {
+          if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = originalText;
+          }
         }
       });
     }
@@ -456,24 +609,76 @@ class FinCloudApp {
     const modal = document.getElementById('modal-receipt-viewer');
     if (!modal) return;
 
-    const img = document.getElementById('receipt-viewer-img');
+    const previewBox = modal.querySelector('.receipt-preview-box');
     const title = document.getElementById('receipt-viewer-title');
     const fileLabel = document.getElementById('receipt-viewer-filename');
     const downloadBtn = document.getElementById('btn-receipt-download');
 
-    if (img) img.src = tx.receipt;
-    if (title) title.textContent = `Bukti: ${tx.description}`;
-    if (fileLabel) fileLabel.textContent = tx.receiptName || 'struk-transaksi.jpg';
+    let receiptUrl = tx.receipt;
+    let retried = false;
+    const isPdf = /\.pdf(?:$|[?#])/i.test(receiptUrl || '') ||
+      /\.pdf$/i.test(tx.receiptName || '');
 
-    if (downloadBtn) {
+    const bindDownload = (url) => {
+      if (!downloadBtn) return;
       downloadBtn.onclick = () => {
         const link = document.createElement('a');
-        link.href = tx.receipt;
+        link.href = url;
         link.download = tx.receiptName || 'struk-fincloud.jpg';
         link.target = '_blank';
+        link.rel = 'noopener';
         link.click();
       };
+    };
+
+    // Presigned URLs expire; ask the API for a fresh one and swap the source.
+    const refreshUrl = async () => {
+      if (!tx.id) return;
+      try {
+        const fresh = await FinStore.refreshReceiptUrl(tx.id);
+        if (!fresh) return;
+        receiptUrl = fresh;
+        const image = previewBox?.querySelector('img');
+        if (image) image.src = fresh;
+        const frame = previewBox?.querySelector('iframe');
+        if (frame) frame.src = fresh;
+        bindDownload(fresh);
+      } catch {
+        // Keep the existing URL; the viewer still shows the last known value.
+      }
+    };
+
+    // Rebuild the preview so switching between images and PDFs works.
+    if (previewBox) {
+      previewBox.replaceChildren();
+
+      if (isPdf) {
+        const frame = document.createElement('iframe');
+        frame.src = receiptUrl;
+        frame.title = `Struk ${tx.description || ''}`;
+        frame.style.cssText = 'width:100%; height:420px; border:0; border-radius:8px; background:#fff;';
+        previewBox.appendChild(frame);
+      } else {
+        const image = document.createElement('img');
+        image.id = 'receipt-viewer-img';
+        image.className = 'receipt-preview-img';
+        image.alt = 'Bukti Struk Transaksi FinCloud';
+        image.src = receiptUrl;
+        image.onerror = () => {
+          if (retried) return;
+          retried = true;
+          refreshUrl();
+        };
+        previewBox.appendChild(image);
+      }
     }
+
+    if (title) title.textContent = `Bukti: ${tx.description}`;
+    if (fileLabel) fileLabel.textContent = tx.receiptName || 'struk-transaksi.jpg';
+    bindDownload(receiptUrl);
+
+    // Always refresh proactively: the cached URL may already be close to expiry.
+    refreshUrl();
 
     modal.classList.add('active');
 
@@ -490,11 +695,26 @@ class FinCloudApp {
   }
 
   /* Profile Page */
-  renderProfilePage() {
+  async renderProfilePage() {
     const container = document.getElementById('view-content');
     if (!container) return;
 
-    const user = FinStore.getUser();
+    const user = FinStore.getUser() || { name: '-', email: '-', role: 'USER' };
+
+    let health = null;
+    let adminStatus = null;
+    try {
+      const result = await FinStore.loadSystemHealth();
+      health = result.health;
+      adminStatus = result.adminStatus;
+    } catch (error) {
+      health = null;
+    }
+
+    const dbConnected = Boolean(health?.database?.connected);
+    const apiUp = health?.status === 'UP';
+    const storageConnected = Boolean(health?.storage?.connected);
+    const storageStatus = storageConnected ? 'Terhubung' : 'Tidak Terhubung';
 
     container.innerHTML = `
       <div style="display: flex; flex-direction: column; gap: 1.5rem; max-width: 800px; margin: 0 auto;">
@@ -507,43 +727,48 @@ class FinCloudApp {
           <form id="profile-form">
             <div class="form-group">
               <label class="form-label">Nama Lengkap</label>
-              <input type="text" class="form-input" id="profile-name" value="${user.name}" />
+              <input type="text" class="form-input" id="profile-name" value="${user.name || ''}" />
             </div>
 
             <div class="form-group">
               <label class="form-label">Alamat Email</label>
-              <input type="email" class="form-input" id="profile-email" value="${user.email}" />
+              <input type="email" class="form-input" id="profile-email" value="${user.email || ''}" />
             </div>
 
             <div class="form-group">
               <label class="form-label">Role Akses (RBAC)</label>
-              <select class="form-select" id="profile-role">
+              <select class="form-select" id="profile-role" disabled>
                 <option value="USER" ${user.role === 'USER' ? 'selected' : ''}>USER (Pengguna Biasa)</option>
                 <option value="ADMIN" ${user.role === 'ADMIN' ? 'selected' : ''}>ADMIN (Pengelola Sistem)</option>
               </select>
+              <span class="form-label-desc">Role hanya dapat diubah oleh Administrator melalui panel admin.</span>
             </div>
 
-            <button type="submit" class="btn btn-primary" style="margin-top: 1rem;">Simpan Perubahan</button>
+            <button type="submit" class="btn btn-primary" style="margin-top: 1rem;" id="btn-save-profile">Simpan Perubahan</button>
           </form>
         </div>
 
         <div class="card">
           <div class="card-header">
             <h3 class="card-title">Status Layanan FinCloud</h3>
-            <span class="badge badge-income">Sehat</span>
+            <span class="badge ${apiUp ? 'badge-income' : 'badge-expense'}">${apiUp ? 'Sehat' : 'Tidak Terhubung'}</span>
           </div>
           <div style="display:flex; flex-direction:column; gap:0.75rem; font-size:0.85rem;">
             <div style="display:flex; justify-content:space-between; padding:0.5rem 0; border-bottom:1px solid var(--border-subtle);">
-              <span style="color:var(--text-muted);">Database PostgreSQL</span>
-              <span style="color:var(--income-500); font-weight:600;">Terhubung (Port 5432)</span>
+              <span style="color:var(--text-muted);">Backend REST API</span>
+              <span style="color:${apiUp ? 'var(--income-500)' : 'var(--expense-500)'}; font-weight:600;">${apiUp ? 'Online' : 'Offline'}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; padding:0.5rem 0; border-bottom:1px solid var(--border-subtle);">
+              <span style="color:var(--text-muted);">Database MariaDB</span>
+              <span style="color:${dbConnected ? 'var(--income-500)' : 'var(--expense-500)'}; font-weight:600;">${dbConnected ? 'Terhubung' : 'Tidak Terhubung'}</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:0.5rem 0; border-bottom:1px solid var(--border-subtle);">
               <span style="color:var(--text-muted);">Object Storage MinIO</span>
-              <span style="color:var(--income-500); font-weight:600;">S3 API OK (Port 9000)</span>
+              <span style="color:${storageConnected ? 'var(--income-500)' : 'var(--expense-500)'}; font-weight:600;">${storageStatus}</span>
             </div>
             <div style="display:flex; justify-content:space-between; padding:0.5rem 0;">
               <span style="color:var(--text-muted);">Monitoring Prometheus & Grafana</span>
-              <span style="color:var(--accent-cyan); font-weight:600;">Metrics Exporter Aktif</span>
+              <span style="color:var(--accent-cyan); font-weight:600;">${adminStatus ? 'Metrics Exporter Aktif' : 'Khusus Administrator'}</span>
             </div>
           </div>
         </div>
@@ -552,21 +777,37 @@ class FinCloudApp {
 
     const form = document.getElementById('profile-form');
     if (form) {
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
+
         const updatedName = document.getElementById('profile-name').value.trim();
         const updatedEmail = document.getElementById('profile-email').value.trim();
-        const updatedRole = document.getElementById('profile-role').value;
+        const saveBtn = document.getElementById('btn-save-profile');
 
-        FinStore.setUser({
-          ...user,
-          name: updatedName,
-          email: updatedEmail,
-          role: updatedRole
-        });
+        if (!updatedName || !updatedEmail) {
+          this.showToast('Nama dan email wajib diisi', 'error');
+          return;
+        }
 
-        this.updateUserBadge(FinStore.getUser());
-        this.showToast('Profil dan role berhasil diperbarui!', 'success');
+        if (saveBtn) {
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Menyimpan...';
+        }
+
+        try {
+          await FinStore.updateProfile({ name: updatedName, email: updatedEmail });
+          this.updateUserBadge(FinStore.getUser());
+          this.showToast('Profil berhasil diperbarui!', 'success');
+        } catch (error) {
+          if (error?.status !== 401) {
+            this.showToast(error.message || 'Gagal memperbarui profil', 'error');
+          }
+        } finally {
+          if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Simpan Perubahan';
+          }
+        }
       });
     }
   }

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from '../config/db.js';
+import { authAttemptsTotal } from '../config/metrics.js';
 import { logAudit } from '../utils/audit.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -73,6 +74,7 @@ router.post('/login', async (req, res) => {
     const clientIp = req.ip || req.socket.remoteAddress;
 
     if (!email || !password) {
+      authAttemptsTotal.inc({ result: 'invalid_request' });
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
 
@@ -85,6 +87,7 @@ router.post('/login', async (req, res) => {
     );
 
     if (users.length === 0) {
+      authAttemptsTotal.inc({ result: 'invalid_credentials' });
       await logAudit({
         userId: null,
         action: 'FAILED_LOGIN',
@@ -98,6 +101,7 @@ router.post('/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!isMatch) {
+      authAttemptsTotal.inc({ result: 'invalid_credentials' });
       await logAudit({
         userId: user.id,
         action: 'FAILED_LOGIN',
@@ -107,6 +111,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
+    authAttemptsTotal.inc({ result: 'success' });
     await logAudit({
       userId: user.id,
       action: 'USER_LOGIN',
@@ -127,6 +132,7 @@ router.post('/login', async (req, res) => {
       user: { id: user.id, name: user.name, email: user.email, role: user.role }
     });
   } catch (error) {
+    authAttemptsTotal.inc({ result: 'error' });
     console.error('Login error:', error);
     return res.status(500).json({ success: false, message: 'Server error: ' + error.message });
   }
@@ -160,6 +166,55 @@ router.get('/profile', authenticateToken, async (req, res) => {
     }
 
     return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PUT /api/profile - update the authenticated user's own name/email.
+// Role changes are intentionally restricted to the admin area.
+router.put('/profile', authenticateToken, async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    const clientIp = req.ip || req.socket.remoteAddress;
+
+    if (!name || !email) {
+      return res.status(400).json({ success: false, message: 'Name and email are required' });
+    }
+
+    const [duplicate] = await pool.query(
+      'SELECT id FROM users WHERE email = ? AND id <> ? LIMIT 1',
+      [email, req.user.id]
+    );
+
+    if (duplicate.length > 0) {
+      return res.status(400).json({ success: false, message: 'Email is already registered' });
+    }
+
+    await pool.query('UPDATE users SET name = ?, email = ? WHERE id = ?', [
+      name,
+      email,
+      req.user.id
+    ]);
+
+    const [rows] = await pool.query(
+      `SELECT u.id, u.name, u.email, r.name as role, u.created_at
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       WHERE u.id = ?`,
+      [req.user.id]
+    );
+
+    await logAudit({
+      userId: req.user.id,
+      action: 'PROFILE_UPDATE',
+      entity: 'users',
+      entityId: req.user.id,
+      details: `Profile updated for ${email}`,
+      ipAddress: clientIp
+    });
+
+    return res.json({ success: true, message: 'Profile updated successfully', user: rows[0] });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

@@ -1,21 +1,82 @@
 /**
  * FinCloud Dashboard View Module
- * Renders executive KPI metrics, interactive HTML5 canvas charts,
- * recent transactions list, and cloud service status indicators.
+ * Renders KPI metrics, canvas charts, recent transactions and live service
+ * status using data from /api/dashboard, /api/reports and /api/health.
  */
 
 import { FinStore } from './store.js';
 import { router } from './router.js';
 
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const CATEGORY_PALETTE = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#f43f5e', '#a855f7', '#14b8a6'];
+
+function formatCompact(value) {
+  const num = Number(value) || 0;
+  if (Math.abs(num) >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}M`;
+  if (Math.abs(num) >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}jt`;
+  if (Math.abs(num) >= 1_000) return `${(num / 1_000).toFixed(0)}rb`;
+  return String(Math.round(num));
+}
+
+function trendMarkup(current, previous) {
+  if (!previous || previous <= 0) {
+    return `<span class="trend-badge up">Data API</span>`;
+  }
+
+  const percent = Math.round(((current - previous) / previous) * 100);
+  const isUp = percent >= 0;
+
+  return `
+    <span class="trend-badge ${isUp ? 'up' : 'down'}">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        ${isUp
+          ? '<polyline points="18 15 12 9 6 15"></polyline>'
+          : '<polyline points="6 9 12 15 18 9"></polyline>'}
+      </svg>
+      ${isUp ? '+' : ''}${percent}%
+    </span>
+  `;
+}
+
 export const DashboardModule = {
-  render() {
+  _monthly: [],
+  _expenseCategories: [],
+  _recentTransactions: [],
+  _health: null,
+
+  async render() {
     const container = document.getElementById('view-content');
     if (!container) return;
 
+    const currentYear = new Date().getFullYear();
+
+    const [dashboard, monthly, expenseCategories] = await Promise.all([
+      FinStore.loadDashboard(),
+      FinStore.loadMonthlyReport(currentYear),
+      FinStore.loadCategoryReport({ type: 'expense' })
+    ]);
+
+    let health = null;
+    try {
+      health = await FinStore.loadSystemHealth();
+    } catch (error) {
+      health = null;
+    }
+
+    this._monthly = monthly || [];
+    this._expenseCategories = expenseCategories || [];
+    this._recentTransactions = dashboard?.recentTransactions || [];
+    this._health = health;
+
     const user = FinStore.getUser();
-    const metrics = FinStore.getFinancialMetrics();
-    const transactions = FinStore.getTransactions().slice(0, 5);
-    const health = FinStore.getSystemHealth();
+    const metrics = this.buildMetrics(dashboard, this._monthly);
+    const transactions = this._recentTransactions;
+    const topCategories = this._expenseCategories.slice(0, 3);
+    const totalExpense = metrics.totalExpense;
+
+    const apiUp = health?.health?.status === 'UP';
+    const dbConnected = Boolean(health?.health?.database?.connected);
+    const storageReady = Boolean(health?.health?.storage?.connected);
 
     container.innerHTML = `
       <div class="dashboard-view">
@@ -49,10 +110,7 @@ export const DashboardModule = {
             </div>
             <div class="stat-value">${FinStore.formatCurrency(metrics.balance)}</div>
             <div class="stat-footer">
-              <span class="trend-badge up">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>
-                +14.2%
-              </span>
+              ${trendMarkup(metrics.monthlyIncome - metrics.monthlyExpense, metrics.previousNet)}
               <span>vs bulan sebelumnya</span>
             </div>
           </div>
@@ -67,11 +125,8 @@ export const DashboardModule = {
             </div>
             <div class="stat-value" style="color: var(--income-500);">${FinStore.formatCurrency(metrics.totalIncome)}</div>
             <div class="stat-footer">
-              <span class="trend-badge up">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"></polyline></svg>
-                +8.5%
-              </span>
-              <span>dari target pendapatan</span>
+              ${trendMarkup(metrics.monthlyIncome, metrics.previousIncome)}
+              <span>Bulan ini ${FinStore.formatCurrency(metrics.monthlyIncome)}</span>
             </div>
           </div>
 
@@ -85,11 +140,8 @@ export const DashboardModule = {
             </div>
             <div class="stat-value" style="color: var(--expense-500);">${FinStore.formatCurrency(metrics.totalExpense)}</div>
             <div class="stat-footer">
-              <span class="trend-badge down">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                -3.1%
-              </span>
-              <span>terkendali di bawah budget</span>
+              ${trendMarkup(metrics.monthlyExpense, metrics.previousExpense)}
+              <span>Bulan ini ${FinStore.formatCurrency(metrics.monthlyExpense)}</span>
             </div>
           </div>
 
@@ -103,7 +155,7 @@ export const DashboardModule = {
             </div>
             <div class="stat-value" style="color: var(--accent-cyan);">${metrics.savingsRate}%</div>
             <div class="stat-footer">
-              <span class="trend-badge up">Optimal</span>
+              <span class="trend-badge up">${metrics.savingsRate >= 20 ? 'Optimal' : 'Perlu Ditingkatkan'}</span>
               <span>${metrics.transactionCount} total transaksi tercatat</span>
             </div>
           </div>
@@ -111,7 +163,7 @@ export const DashboardModule = {
 
         <!-- Interactive Visual Charts -->
         <div class="charts-grid">
-          <!-- Cash Flow Bar/Area Chart -->
+          <!-- Cash Flow Bar Chart -->
           <div class="card chart-card">
             <div class="card-header">
               <h3 class="card-title">
@@ -159,7 +211,7 @@ export const DashboardModule = {
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                 Transaksi Terbaru
               </h3>
-              <span class="card-action" id="btn-see-all-tx">Lihat Semua (${FinStore.getTransactions().length}) &rarr;</span>
+              <span class="card-action" id="btn-see-all-tx">Lihat Semua (${metrics.transactionCount}) &rarr;</span>
             </div>
             <div class="mini-transaction-list">
               ${transactions.length === 0 ? `
@@ -200,65 +252,59 @@ export const DashboardModule = {
             </div>
           </div>
 
-          <!-- Budget Progress & Cloud Infrastructure Status -->
+          <!-- Category Allocation & Cloud Infrastructure Status -->
           <div class="card">
             <div class="card-header">
               <h3 class="card-title">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                Alokasi Budget & Status Cloud
+                Alokasi Pengeluaran & Status Cloud
               </h3>
             </div>
-            
+
             <div class="budget-progress-box">
-              <div class="budget-item">
-                <div class="budget-item-header">
-                  <span class="budget-name">Kebutuhan Rutin & Tempat Tinggal</span>
-                  <span class="budget-vals">Rp 4.050.000 / Rp 6.000.000 (68%)</span>
-                </div>
-                <div class="progress-track">
-                  <div class="progress-fill" style="width: 68%; background: var(--primary-500);"></div>
-                </div>
-              </div>
+              ${topCategories.length === 0 ? `
+                <p style="color:var(--text-muted); font-size:0.85rem;">Belum ada pengeluaran untuk dianalisis.</p>
+              ` : topCategories.map((category, index) => {
+                const percent = totalExpense > 0
+                  ? Math.round((category.total_amount / totalExpense) * 100)
+                  : 0;
+                const color = category.color || CATEGORY_PALETTE[index % CATEGORY_PALETTE.length];
 
-              <div class="budget-item">
-                <div class="budget-item-header">
-                  <span class="budget-name">Makanan & Kuliner</span>
-                  <span class="budget-vals">Rp 1.250.000 / Rp 2.500.000 (50%)</span>
-                </div>
-                <div class="progress-track">
-                  <div class="progress-fill" style="width: 50%; background: var(--accent-cyan);"></div>
-                </div>
-              </div>
-
-              <div class="budget-item">
-                <div class="budget-item-header">
-                  <span class="budget-name">Hiburan & Belanja</span>
-                  <span class="budget-vals">Rp 1.030.000 / Rp 2.000.000 (51%)</span>
-                </div>
-                <div class="progress-track">
-                  <div class="progress-fill" style="width: 51%; background: var(--accent-purple);"></div>
-                </div>
-              </div>
+                return `
+                  <div class="budget-item">
+                    <div class="budget-item-header">
+                      <span class="budget-name">${category.name}</span>
+                      <span class="budget-vals">${FinStore.formatCurrency(category.total_amount)} (${percent}%)</span>
+                    </div>
+                    <div class="progress-track">
+                      <div class="progress-fill" style="width: ${percent}%; background: ${color};"></div>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
             </div>
 
-            <!-- Cloud Nodes from Docker Charter -->
+            <!-- Cloud Nodes from live API health -->
             <div class="cloud-nodes">
               <div class="cloud-node">
-                <div class="node-title">PostgreSQL DB</div>
-                <div class="node-status" style="color: var(--income-500);">
-                  <span class="pulse-dot"></span> Online
+                <div class="node-title">REST API</div>
+                <div class="node-status" style="color: ${apiUp ? 'var(--income-500)' : 'var(--expense-500)'};">
+                  <span class="pulse-dot" style="${apiUp ? '' : 'background:var(--expense-500); box-shadow:0 0 8px var(--expense-500);'}"></span>
+                  ${apiUp ? 'Online' : 'Offline'}
+                </div>
+              </div>
+              <div class="cloud-node">
+                <div class="node-title">MariaDB</div>
+                <div class="node-status" style="color: ${dbConnected ? 'var(--income-500)' : 'var(--expense-500)'};">
+                  <span class="pulse-dot" style="${dbConnected ? '' : 'background:var(--expense-500); box-shadow:0 0 8px var(--expense-500);'}"></span>
+                  ${dbConnected ? 'Connected' : 'Disconnected'}
                 </div>
               </div>
               <div class="cloud-node">
                 <div class="node-title">MinIO Storage</div>
-                <div class="node-status" style="color: var(--income-500);">
-                  <span class="pulse-dot"></span> S3 Ready
-                </div>
-              </div>
-              <div class="cloud-node">
-                <div class="node-title">Prometheus</div>
-                <div class="node-status" style="color: var(--accent-cyan);">
-                  <span class="pulse-dot" style="background:var(--accent-cyan); box-shadow:0 0 8px var(--accent-cyan);"></span> Aktif
+                <div class="node-status" style="color: ${storageReady ? 'var(--income-500)' : 'var(--expense-500)'};">
+                  <span class="pulse-dot" style="${storageReady ? '' : 'background:var(--expense-500); box-shadow:0 0 8px var(--expense-500);'}"></span>
+                  ${storageReady ? 'S3 Ready' : 'Offline'}
                 </div>
               </div>
             </div>
@@ -269,8 +315,40 @@ export const DashboardModule = {
     `;
 
     this.bindEvents();
-    this.drawCashFlowChart();
-    this.drawDonutChart();
+    this.drawCashFlowChart(this._monthly);
+    this.drawDonutChart(this._expenseCategories);
+  },
+
+  buildMetrics(dashboard, monthly) {
+    const totalIncome = Number(dashboard?.totalIncome) || 0;
+    const totalExpense = Number(dashboard?.totalExpense) || 0;
+    const balance = Number(dashboard?.currentBalance) || 0;
+    const transactionCount = Number(dashboard?.transactionCount) || 0;
+    const monthlyIncome = Number(dashboard?.monthlyIncome) || 0;
+    const monthlyExpense = Number(dashboard?.monthlyExpense) || 0;
+
+    const currentMonth = new Date().getMonth() + 1;
+    const previousMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+    const currentRow = (monthly || []).find((row) => row.month === currentMonth);
+    const previousRow = (monthly || []).find((row) => row.month === previousMonth);
+
+    const previousIncome = previousRow?.income ?? (currentRow ? 0 : 0);
+    const previousExpense = previousRow?.expense ?? (currentRow ? 0 : 0);
+    const previousNet = previousIncome - previousExpense;
+
+    return {
+      totalIncome,
+      totalExpense,
+      balance,
+      transactionCount,
+      monthlyIncome,
+      monthlyExpense,
+      previousIncome,
+      previousExpense,
+      previousNet,
+      savingsRate:
+        totalIncome > 0 ? Math.max(0, Math.round((balance / totalIncome) * 100)) : 0
+    };
   },
 
   bindEvents() {
@@ -301,7 +379,7 @@ export const DashboardModule = {
       item.addEventListener('click', (e) => {
         if (e.target.closest('.btn-dashboard-receipt')) return;
         const id = item.getAttribute('data-id');
-        const tx = FinStore.getTransactions().find(t => t.id === id);
+        const tx = this._recentTransactions.find(t => String(t.id) === String(id));
         if (tx && window.openTransactionModal) {
           window.openTransactionModal(tx);
         }
@@ -312,7 +390,7 @@ export const DashboardModule = {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.getAttribute('data-id');
-        const tx = FinStore.getTransactions().find(t => t.id === id);
+        const tx = this._recentTransactions.find(t => String(t.id) === String(id));
         if (tx && tx.receipt && window.openReceiptModal) {
           window.openReceiptModal(tx);
         }
@@ -329,13 +407,16 @@ export const DashboardModule = {
     }
   },
 
-  drawCashFlowChart() {
+  drawCashFlowChart(monthly = null) {
     const canvas = document.getElementById('cashflow-canvas');
     if (!canvas) return;
+
+    if (monthly) this._monthly = monthly;
+    const data = this._monthly || [];
+
     const ctx = canvas.getContext('2d');
     const container = canvas.parentElement;
 
-    // Handle high DPI
     const dpr = window.devicePixelRatio || 1;
     const rect = container.getBoundingClientRect();
     const w = rect.width > 0 ? rect.width : (container.clientWidth || 600);
@@ -343,117 +424,114 @@ export const DashboardModule = {
 
     canvas.width = w * dpr;
     canvas.height = h * dpr;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const padding = { top: 20, right: 20, bottom: 40, left: 50 };
+    const padding = { top: 20, right: 20, bottom: 40, left: 56 };
     const chartW = Math.max(w - padding.left - padding.right, 100);
     const chartH = Math.max(h - padding.top - padding.bottom, 100);
 
-    // Sample 6-Month Data: May to Oct 2026
-    const months = ['Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt'];
-    const incomeData = [12000000, 14500000, 13200000, 16000000, 15000000, 20700000];
-    const expenseData = [5800000, 6200000, 7100000, 6900000, 6150000, 6350000];
-    const maxVal = 25000000;
+    // Last 6 months ending with the current month.
+    const now = new Date();
+    const months = [];
+    for (let i = 5; i >= 0; i -= 1) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthNumber = date.getMonth() + 1;
+      const row = data.find((item) => item.month === monthNumber) || { income: 0, expense: 0 };
+      months.push({
+        label: MONTH_LABELS[date.getMonth()],
+        income: row.income,
+        expense: row.expense
+      });
+    }
 
-    // Clear
+    const maxValue = Math.max(
+      ...months.map((month) => Math.max(month.income, month.expense)),
+      1
+    );
+    const maxVal = Math.ceil(maxValue / 1_000_000) * 1_000_000 || 1;
+
     ctx.clearRect(0, 0, w, h);
 
-    // Draw horizontal grid lines
     ctx.lineWidth = 1;
     ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border-color') || '#202d45';
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-faint') || '#64748b';
     ctx.font = '11px sans-serif';
 
     const gridSteps = 4;
-    for (let i = 0; i <= gridSteps; i++) {
+    for (let i = 0; i <= gridSteps; i += 1) {
       const y = padding.top + (chartH / gridSteps) * i;
-      const val = Math.round((maxVal - (maxVal / gridSteps) * i) / 1000000);
+      const value = maxVal - (maxVal / gridSteps) * i;
+
       ctx.beginPath();
       ctx.moveTo(padding.left, y);
       ctx.lineTo(w - padding.right, y);
       ctx.stroke();
 
-      ctx.fillText(val + 'M', 15, y + 4);
+      ctx.textAlign = 'right';
+      ctx.fillText(formatCompact(value), padding.left - 10, y + 4);
     }
 
-    // Draw bars
     const barGroupWidth = chartW / months.length;
     const barWidth = Math.min(22, barGroupWidth * 0.35);
 
-    months.forEach((month, idx) => {
-      const groupX = padding.left + idx * barGroupWidth;
+    months.forEach((month, index) => {
+      const groupX = padding.left + index * barGroupWidth;
       const centerX = groupX + barGroupWidth / 2;
 
-      // Income bar (green)
-      const incH = (incomeData[idx] / maxVal) * chartH;
-      const incX = centerX - barWidth - 3;
-      const incY = padding.top + chartH - incH;
+      const incomeHeight = (month.income / maxVal) * chartH;
+      const incomeX = centerX - barWidth - 3;
+      const incomeY = padding.top + chartH - incomeHeight;
 
       ctx.fillStyle = '#10b981';
-      this.drawRoundedRect(ctx, incX, incY, barWidth, incH, 4);
+      this.drawRoundedRect(ctx, incomeX, incomeY, barWidth, incomeHeight, 4);
 
-      // Expense bar (rose)
-      const expH = (expenseData[idx] / maxVal) * chartH;
-      const expX = centerX + 3;
-      const expY = padding.top + chartH - expH;
+      const expenseHeight = (month.expense / maxVal) * chartH;
+      const expenseX = centerX + 3;
+      const expenseY = padding.top + chartH - expenseHeight;
 
       ctx.fillStyle = '#f43f5e';
-      this.drawRoundedRect(ctx, expX, expY, barWidth, expH, 4);
+      this.drawRoundedRect(ctx, expenseX, expenseY, barWidth, expenseHeight, 4);
 
-      // Month label
       ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-muted') || '#94a3b8';
       ctx.textAlign = 'center';
-      ctx.fillText(month, centerX, h - 15);
+      ctx.fillText(month.label, centerX, h - 15);
     });
   },
 
-  drawDonutChart() {
+  drawDonutChart(categories = null) {
     const canvas = document.getElementById('donut-canvas');
     if (!canvas) return;
+
+    if (categories) this._expenseCategories = categories;
+
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
     canvas.width = 220 * dpr;
     canvas.height = 220 * dpr;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const centerX = 110;
     const centerY = 110;
     const outerRadius = 85;
     const innerRadius = 55;
 
-    // Dynamically calculate from real transactions in FinStore
-    const categoryColors = {
-      'Housing': '#eab308',
-      'Food': '#f43f5e',
-      'Utilities': '#14b8a6',
-      'Transportation': '#f97316',
-      'Healthcare': '#ec4899',
-      'Entertainment': '#a855f7',
-      'Shopping': '#06b6d4',
-      'Education': '#3b82f6',
-      'Other': '#64748b'
-    };
+    const source = this._expenseCategories || [];
+    let data = source
+      .slice(0, 5)
+      .map((category, index) => ({
+        label: category.name,
+        value: Number(category.total_amount) || 0,
+        color: category.color || CATEGORY_PALETTE[index % CATEGORY_PALETTE.length]
+      }))
+      .filter((item) => item.value > 0);
 
-    const expenseTx = FinStore.getTransactions().filter(t => t.type === 'expense');
-    let data = [];
+    const hasData = data.length > 0;
 
-    if (expenseTx.length > 0) {
-      const groups = {};
-      expenseTx.forEach(t => {
-        groups[t.category] = (groups[t.category] || 0) + t.amount;
-      });
-      data = Object.keys(groups).map(cat => ({
-        label: cat,
-        value: groups[cat],
-        color: categoryColors[cat] || '#8b5cf6'
-      })).sort((a, b) => b.value - a.value).slice(0, 5);
-    } else {
-      data = [
-        { label: 'Belum Ada', value: 1, color: '#334155' }
-      ];
+    if (!hasData) {
+      data = [{ label: 'Belum Ada', value: 1, color: '#334155' }];
     }
 
-    const total = data.reduce((a, b) => a + b.value, 0);
+    const total = data.reduce((sum, item) => sum + item.value, 0);
     let startAngle = -Math.PI / 2;
 
     ctx.clearRect(0, 0, 220, 220);
@@ -469,27 +547,27 @@ export const DashboardModule = {
       startAngle += sliceAngle;
     });
 
-    // Center text
     ctx.textAlign = 'center';
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-main') || '#fff';
     ctx.font = 'bold 16px sans-serif';
     ctx.fillText('Pengeluaran', centerX, centerY - 2);
     ctx.font = '11px sans-serif';
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-muted') || '#94a3b8';
-    ctx.fillText(FinStore.formatCurrency(total), centerX, centerY + 18);
+    ctx.fillText(FinStore.formatCurrency(hasData ? total : 0), centerX, centerY + 18);
 
-    // Build Legend List
     const legendList = document.getElementById('donut-legend-list');
     if (legendList) {
-      legendList.innerHTML = data.map(item => `
-        <div style="display:flex; align-items:center; justify-content:space-between; font-size:0.8rem;">
-          <div style="display:flex; align-items:center; gap:0.4rem;">
-            <span style="width:8px; height:8px; border-radius:50%; background:${item.color};"></span>
-            <span>${item.label}</span>
+      legendList.innerHTML = hasData
+        ? data.map(item => `
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:0.8rem;">
+            <div style="display:flex; align-items:center; gap:0.4rem;">
+              <span style="width:8px; height:8px; border-radius:50%; background:${item.color};"></span>
+              <span>${item.label}</span>
+            </div>
+            <span style="font-weight:600;">${total > 0 ? Math.round((item.value / total) * 100) : 0}%</span>
           </div>
-          <span style="font-weight:600;">${Math.round((item.value / total) * 100)}%</span>
-        </div>
-      `).join('');
+        `).join('')
+        : '<p style="color:var(--text-muted); font-size:0.8rem; text-align:center;">Belum ada pengeluaran untuk dianalisis.</p>';
     }
   },
 
