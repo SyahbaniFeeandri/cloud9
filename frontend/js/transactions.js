@@ -1,10 +1,28 @@
 /**
  * FinCloud Transactions Page Module
- * Full CRUD, search & multi-facet filtering, MinIO receipt upload simulation,
- * pagination, and interactive receipts preview.
+ * Full CRUD with server-side filtering/search/pagination and MinIO receipts.
  */
 
 import { FinStore, CATEGORIES } from './store.js';
+
+function toInputDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getMonthRange(offset = 0) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+
+  return {
+    startDate: toInputDate(start),
+    endDate: toInputDate(end),
+    label: start.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' })
+  };
+}
 
 export const TransactionsModule = {
   currentPage: 1,
@@ -13,14 +31,15 @@ export const TransactionsModule = {
   selectedType: 'all',
   selectedCategory: 'all',
   selectedDateFilter: 'all',
-  editingTxId: null,
-  uploadedReceiptData: null,
+  _rows: [],
+  _searchTimer: null,
 
-  render() {
+  async render() {
     const container = document.getElementById('view-content');
     if (!container) return;
 
-    const allCategories = [...CATEGORIES.income, ...CATEGORIES.expense];
+    const thisMonth = getMonthRange(0);
+    const lastMonth = getMonthRange(-1);
 
     container.innerHTML = `
       <div class="transactions-view">
@@ -67,8 +86,8 @@ export const TransactionsModule = {
             <!-- Date Range Filter -->
             <select class="filter-select" id="filter-tx-date">
               <option value="all" ${this.selectedDateFilter === 'all' ? 'selected' : ''}>Semua Periode</option>
-              <option value="this-month" ${this.selectedDateFilter === 'this-month' ? 'selected' : ''}>Bulan Ini (Okt 2026)</option>
-              <option value="last-month" ${this.selectedDateFilter === 'last-month' ? 'selected' : ''}>Bulan Lalu (Sep 2026)</option>
+              <option value="this-month" ${this.selectedDateFilter === 'this-month' ? 'selected' : ''}>Bulan Ini (${thisMonth.label})</option>
+              <option value="last-month" ${this.selectedDateFilter === 'last-month' ? 'selected' : ''}>Bulan Lalu (${lastMonth.label})</option>
             </select>
 
             <!-- Summary Chips -->
@@ -93,7 +112,14 @@ export const TransactionsModule = {
                 </tr>
               </thead>
               <tbody id="tx-table-body">
-                <!-- Rendered dynamically -->
+                <tr>
+                  <td colspan="6">
+                    <div class="view-loading" style="min-height:180px;">
+                      <div class="loading-spinner"></div>
+                      <p>Memuat transaksi...</p>
+                    </div>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -107,67 +133,108 @@ export const TransactionsModule = {
     `;
 
     this.bindEvents();
-    this.renderTableContent();
+    await this.loadAndRender();
   },
 
-  getFilteredData() {
-    let list = FinStore.getTransactions();
-
-    // Text search
-    if (this.searchQuery.trim()) {
-      const q = this.searchQuery.toLowerCase();
-      list = list.filter(t => 
-        t.description.toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q)
-      );
-    }
-
-    // Type filter
-    if (this.selectedType !== 'all') {
-      list = list.filter(t => t.type === this.selectedType);
-    }
-
-    // Category filter
-    if (this.selectedCategory !== 'all') {
-      list = list.filter(t => t.category === this.selectedCategory);
-    }
-
-    // Date filter
+  getDateRange() {
     if (this.selectedDateFilter === 'this-month') {
-      list = list.filter(t => t.date.startsWith('2026-10'));
-    } else if (this.selectedDateFilter === 'last-month') {
-      list = list.filter(t => t.date.startsWith('2026-09'));
+      const range = getMonthRange(0);
+      return { startDate: range.startDate, endDate: range.endDate };
     }
 
-    return list;
+    if (this.selectedDateFilter === 'last-month') {
+      const range = getMonthRange(-1);
+      return { startDate: range.startDate, endDate: range.endDate };
+    }
+
+    return {};
   },
 
-  renderTableContent() {
+  buildParams() {
+    const params = {
+      limit: this.pageSize,
+      offset: (this.currentPage - 1) * this.pageSize
+    };
+
+    if (this.selectedType !== 'all') params.type = this.selectedType;
+    if (this.selectedCategory !== 'all') params.category = this.selectedCategory;
+    if (this.searchQuery.trim()) params.search = this.searchQuery.trim();
+
+    return { ...params, ...this.getDateRange() };
+  },
+
+  async loadAndRender() {
+    const tbody = document.getElementById('tx-table-body');
+    if (tbody) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="6">
+            <div class="view-loading" style="min-height:180px;">
+              <div class="loading-spinner"></div>
+              <p>Memuat transaksi...</p>
+            </div>
+          </td>
+        </tr>
+      `;
+    }
+
+    try {
+      const rows = await FinStore.loadTransactions(this.buildParams());
+      const total = FinStore.getTransactionTotal();
+      const summary = FinStore.getTransactionSummary();
+
+      const totalPages = Math.max(Math.ceil(total / this.pageSize), 1);
+      if (total > 0 && this.currentPage > totalPages) {
+        this.currentPage = totalPages;
+        return this.loadAndRender();
+      }
+
+      this._rows = rows;
+      this.renderTableContent(rows, total, summary);
+    } catch (error) {
+      if (error?.status === 401) return;
+      this.renderTableError(error);
+    }
+  },
+
+  renderTableError(error) {
+    const tbody = document.getElementById('tx-table-body');
+    const pagination = document.getElementById('tx-pagination-container');
+    if (!tbody) return;
+
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6">
+          <div class="view-error" style="min-height:180px;">
+            <h4 class="empty-state-title">Gagal memuat transaksi</h4>
+            <p class="empty-state-desc">${error?.message || 'Terjadi kesalahan.'}</p>
+            <button class="btn btn-primary" id="btn-retry-transactions" style="margin-top:0.75rem;">Coba Lagi</button>
+          </div>
+        </td>
+      </tr>
+    `;
+    if (pagination) pagination.innerHTML = '<span>Data tidak tersedia</span>';
+
+    const retryBtn = document.getElementById('btn-retry-transactions');
+    if (retryBtn) {
+      retryBtn.addEventListener('click', () => this.loadAndRender());
+    }
+  },
+
+  renderTableContent(rows, total, summary) {
     const tbody = document.getElementById('tx-table-body');
     const pagination = document.getElementById('tx-pagination-container');
     const chipsContainer = document.getElementById('tx-summary-chips');
     if (!tbody) return;
 
-    const filtered = this.getFilteredData();
-    const totalCount = filtered.length;
-    const totalPages = Math.ceil(totalCount / this.pageSize) || 1;
-
-    if (this.currentPage > totalPages) {
-      this.currentPage = totalPages;
-    }
-
-    // Summary calculation for chips
-    const totalIncome = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const totalExpense = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-
     if (chipsContainer) {
       chipsContainer.innerHTML = `
-        <span class="tx-summary-chip">Masuk: <b style="color:var(--income-500);">${FinStore.formatCurrency(totalIncome)}</b></span>
-        <span class="tx-summary-chip">Keluar: <b style="color:var(--expense-500);">${FinStore.formatCurrency(totalExpense)}</b></span>
+        <span class="tx-summary-chip">Masuk: <b style="color:var(--income-500);">${FinStore.formatCurrency(summary.totalIncome)}</b></span>
+        <span class="tx-summary-chip">Keluar: <b style="color:var(--expense-500);">${FinStore.formatCurrency(summary.totalExpense)}</b></span>
       `;
     }
 
-    if (totalCount === 0) {
+    if (total === 0) {
       tbody.innerHTML = `
         <tr>
           <td colspan="6">
@@ -185,10 +252,7 @@ export const TransactionsModule = {
       return;
     }
 
-    const startIndex = (this.currentPage - 1) * this.pageSize;
-    const paginatedItems = filtered.slice(startIndex, startIndex + this.pageSize);
-
-    tbody.innerHTML = paginatedItems.map(t => `
+    tbody.innerHTML = rows.map(t => `
       <tr>
         <td style="color: var(--text-muted); font-size: 0.85rem;">
           ${FinStore.formatDate(t.date)}
@@ -230,87 +294,127 @@ export const TransactionsModule = {
       </tr>
     `).join('');
 
-    // Pagination HTML
+    const totalPages = Math.max(Math.ceil(total / this.pageSize), 1);
+    const startIndex = (this.currentPage - 1) * this.pageSize;
+    const displayStart = startIndex + 1;
+    const displayEnd = Math.min(startIndex + this.pageSize, total);
+
     if (pagination) {
+      const pageButtons = [];
+      for (let page = 1; page <= totalPages; page += 1) {
+        pageButtons.push(`
+          <button class="page-num-btn ${this.currentPage === page ? 'active' : ''}" data-page="${page}">
+            ${page}
+          </button>
+        `);
+      }
+
       pagination.innerHTML = `
         <div>
-          Menampilkan <b>${startIndex + 1}-${Math.min(startIndex + this.pageSize, totalCount)}</b> dari <b>${totalCount}</b> transaksi
+          Menampilkan <b>${displayStart}-${displayEnd}</b> dari <b>${total}</b> transaksi
         </div>
         <div class="pagination-controls">
           <button class="page-num-btn" id="pg-prev-btn" ${this.currentPage === 1 ? 'disabled style="opacity:0.4; cursor:not-allowed;"' : ''}>
             &larr;
           </button>
-          ${Array.from({ length: totalPages }, (_, i) => i + 1).map(p => `
-            <button class="page-num-btn ${this.currentPage === p ? 'active' : ''}" data-page="${p}">
-              ${p}
-            </button>
-          `).join('')}
+          ${pageButtons.join('')}
           <button class="page-num-btn" id="pg-next-btn" ${this.currentPage === totalPages ? 'disabled style="opacity:0.4; cursor:not-allowed;"' : ''}>
             &rarr;
           </button>
         </div>
       `;
 
-      // Pagination events
       const prevBtn = document.getElementById('pg-prev-btn');
       const nextBtn = document.getElementById('pg-next-btn');
-      if (prevBtn) prevBtn.addEventListener('click', () => { if (this.currentPage > 1) { this.currentPage--; this.renderTableContent(); } });
-      if (nextBtn) nextBtn.addEventListener('click', () => { if (this.currentPage < totalPages) { this.currentPage++; this.renderTableContent(); } });
+
+      if (prevBtn) {
+        prevBtn.addEventListener('click', async () => {
+          if (this.currentPage > 1) {
+            this.currentPage -= 1;
+            await this.loadAndRender();
+          }
+        });
+      }
+
+      if (nextBtn) {
+        nextBtn.addEventListener('click', async () => {
+          if (this.currentPage < totalPages) {
+            this.currentPage += 1;
+            await this.loadAndRender();
+          }
+        });
+      }
 
       pagination.querySelectorAll('[data-page]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          this.currentPage = parseInt(e.currentTarget.getAttribute('data-page'));
-          this.renderTableContent();
+        btn.addEventListener('click', async (e) => {
+          this.currentPage = parseInt(e.currentTarget.getAttribute('data-page'), 10);
+          await this.loadAndRender();
         });
       });
     }
 
-    // Attach row action events
     this.bindRowEvents();
   },
 
   bindEvents() {
-    // Search input
+    // Search input with debounce
     const searchInput = document.getElementById('tx-search-input');
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
         this.searchQuery = e.target.value;
         this.currentPage = 1;
-        this.renderTableContent();
+
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => {
+          this.loadAndRender().catch((error) => {
+            if (error?.status !== 401) window.showToast(error.message, 'error');
+          });
+        }, 350);
       });
     }
 
     // Type pills
     document.querySelectorAll('.type-pill-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         document.querySelectorAll('.type-pill-btn').forEach(b => b.classList.remove('active', 'income', 'expense'));
         const type = e.currentTarget.getAttribute('data-type');
         e.currentTarget.classList.add('active');
         if (type === 'income') e.currentTarget.classList.add('income');
         if (type === 'expense') e.currentTarget.classList.add('expense');
         this.selectedType = type;
+
+        // Reset the category filter when it does not belong to the new type.
+        if (type !== 'all' && this.selectedCategory !== 'all') {
+          const allowed = (CATEGORIES[type] || []).some(c => c.name === this.selectedCategory);
+          if (!allowed) {
+            this.selectedCategory = 'all';
+            const catSelect = document.getElementById('filter-tx-category');
+            if (catSelect) catSelect.value = 'all';
+          }
+        }
+
         this.currentPage = 1;
-        this.renderTableContent();
+        await this.loadAndRender();
       });
     });
 
     // Category filter
     const catSelect = document.getElementById('filter-tx-category');
     if (catSelect) {
-      catSelect.addEventListener('change', (e) => {
+      catSelect.addEventListener('change', async (e) => {
         this.selectedCategory = e.target.value;
         this.currentPage = 1;
-        this.renderTableContent();
+        await this.loadAndRender();
       });
     }
 
     // Date filter
     const dateSelect = document.getElementById('filter-tx-date');
     if (dateSelect) {
-      dateSelect.addEventListener('change', (e) => {
+      dateSelect.addEventListener('change', async (e) => {
         this.selectedDateFilter = e.target.value;
         this.currentPage = 1;
-        this.renderTableContent();
+        await this.loadAndRender();
       });
     }
 
@@ -328,7 +432,7 @@ export const TransactionsModule = {
     document.querySelectorAll('.btn-edit-tx').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const id = e.currentTarget.getAttribute('data-id');
-        const tx = FinStore.getTransactions().find(t => t.id === id);
+        const tx = this._rows.find(t => String(t.id) === String(id));
         if (tx) {
           window.openTransactionModal(tx);
         }
@@ -337,13 +441,20 @@ export const TransactionsModule = {
 
     // Delete transaction
     document.querySelectorAll('.btn-delete-tx').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         const id = e.currentTarget.getAttribute('data-id');
-        const tx = FinStore.getTransactions().find(t => t.id === id);
+        const tx = this._rows.find(t => String(t.id) === String(id));
+
         if (tx && confirm(`Apakah Anda yakin ingin menghapus transaksi "${tx.description}"?`)) {
-          FinStore.deleteTransaction(id);
-          window.showToast('Transaksi berhasil dihapus', 'info');
-          this.renderTableContent();
+          try {
+            await FinStore.deleteTransaction(id);
+            window.showToast('Transaksi berhasil dihapus', 'info');
+            await this.loadAndRender();
+          } catch (error) {
+            if (error?.status !== 401) {
+              window.showToast(error.message || 'Gagal menghapus transaksi', 'error');
+            }
+          }
         }
       });
     });
@@ -352,7 +463,7 @@ export const TransactionsModule = {
     document.querySelectorAll('.btn-view-receipt').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const id = e.currentTarget.getAttribute('data-id');
-        const tx = FinStore.getTransactions().find(t => t.id === id);
+        const tx = this._rows.find(t => String(t.id) === String(id));
         if (tx && tx.receipt) {
           window.openReceiptModal(tx);
         }

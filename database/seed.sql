@@ -31,14 +31,13 @@ INSERT INTO categories (type, name, icon, color) VALUES
 ('expense', 'Other', 'more-horizontal', '#64748b');
 
 -- 4. Demo Users (Password: password123)
--- Hash generated using bcrypt salt rounds 10: $2a$10$w09ZfxM.5pZ9P7t5gqN5qeqj8pE7V6X3YwE9dM1EaP3M.2E6HlVfa
--- We provide standard users:
+-- Hash generated using bcrypt salt rounds 10.
 -- Regular user: user@fincloud.local / password123
 -- Admin user: admin@fincloud.local / password123
 INSERT INTO users (id, role_id, name, email, password_hash) VALUES
-(1, 1, 'Andi FinCloud', 'user@fincloud.local', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy'),
-(2, 2, 'System Administrator', 'admin@fincloud.local', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy')
-ON DUPLICATE KEY UPDATE name=VALUES(name);
+(1, 1, 'Andi FinCloud', 'user@fincloud.local', '$2a$10$WZgtILE9KDapHaNJBB1wau36ryF3akgv2a4hz.qNDQav1MW7kvy86'),
+(2, 2, 'System Administrator', 'admin@fincloud.local', '$2a$10$WZgtILE9KDapHaNJBB1wau36ryF3akgv2a4hz.qNDQav1MW7kvy86')
+ON DUPLICATE KEY UPDATE name=VALUES(name), password_hash=VALUES(password_hash);
 
 -- 5. Seed Transactions for Demo
 INSERT INTO transactions (id, user_id, category_id, transaction_type, amount, description, transaction_date) VALUES

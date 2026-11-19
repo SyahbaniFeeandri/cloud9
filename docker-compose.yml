@@ -1,57 +1,304 @@
 services:
+  # 1. MariaDB Database
+  # Credentials come from .env (never commit it). The port is bound to
+  # loopback only so the database is not reachable from the network.
   mariadb:
     image: mariadb:11
-    container_name: cloud9-mariadb
+    container_name: fincloud-mariadb
     restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
-      MARIADB_DATABASE: ${DB_NAME}
-      MARIADB_USER: ${DB_USER}
-      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: "${MARIADB_ROOT_PASSWORD:?Set MARIADB_ROOT_PASSWORD in .env}"
+      MARIADB_DATABASE: "${DB_NAME:-fincloud_db}"
+      MARIADB_USER: "${DB_USER:-webuser}"
+      MARIADB_PASSWORD: "${MARIADB_PASSWORD:?Set MARIADB_PASSWORD in .env}"
+    ports:
+      - "127.0.0.1:3306:3306"
     volumes:
-      - db_data:/var/lib/mysql
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+      - mariadb_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
     networks:
-      - cloud9-net
+      - fincloud-network
 
+  # 2. Backend REST API (Node.js Express + MariaDB)
+  # Not exposed publicly: clients reach it through Nginx at /api/.
+  # The loopback binding keeps local tooling (restore scripts, debugging) working.
   backend:
-    build: ./backend
-    container_name: cloud9-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fincloud-backend
     restart: unless-stopped
-    env_file: .env
     environment:
+      PORT: 5000
+      NODE_ENV: production
       DB_HOST: mariadb
       DB_PORT: 3306
+      DB_USER: "${DB_USER:-webuser}"
+      DB_PASSWORD: "${DB_PASSWORD:?Set DB_PASSWORD in .env}"
+      DB_NAME: "${DB_NAME:-fincloud_db}"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
+      JWT_EXPIRES_IN: "${JWT_EXPIRES_IN:-7d}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,https://localhost:8443}"
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}"
+      MINIO_BUCKET: "${MINIO_BUCKET:-fincloud-receipts}"
+      MINIO_REGION: "${MINIO_REGION:-us-east-1}"
+      # Public URL used to sign receipt URLs. The host/port must match the
+      # address the browser uses (the Nginx edge), and the path prefix is
+      # stripped by Nginx before the request reaches MinIO.
+      MINIO_PUBLIC_ENDPOINT: "${MINIO_PUBLIC_ENDPOINT:-localhost}"
+      MINIO_PUBLIC_PORT: "${MINIO_PUBLIC_PORT:-8080}"
+      MINIO_PUBLIC_USE_SSL: "${MINIO_PUBLIC_USE_SSL:-false}"
+      MINIO_PUBLIC_PATH_PREFIX: "${MINIO_PUBLIC_PATH_PREFIX:-/storage}"
+      MINIO_PRESIGN_EXPIRES: "${MINIO_PRESIGN_EXPIRES:-3600}"
+    ports:
+      - "127.0.0.1:5000:5000"
     depends_on:
       mariadb:
         condition: service_healthy
+      minio:
+        condition: service_started
     networks:
-      - cloud9-net
+      - fincloud-network
 
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: cloud9-nginx
+  # 3. MinIO-compatible Object Storage (receipts bucket)
+  # Upstream `minio/minio` images are no longer published; pgsty/minio is a
+  # maintained, API-compatible community fork (same env vars & CLI).
+  # Ports are bound to loopback: browsers use the /storage/ edge route and
+  # only operators on the host need the console.
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    container_name: fincloud-minio
     restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}"
     ports:
-      - "8080:80"
-      - "8443:443"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
-      - ./frontend:/usr/share/nginx/html:ro
-      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - minio_data:/data
+    networks:
+      - fincloud-network
+
+  # 4. Frontend Web Client (static SPA served by Nginx)
+  # Internal only; the central edge proxy owns the public port.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fincloud-frontend
+    restart: unless-stopped
     depends_on:
       - backend
     networks:
-      - cloud9-net
+      - fincloud-network
+
+  # 5. TLS certificate generator (one-shot)
+  # Creates a self-signed certificate for local/demo use if one does not exist.
+  # Replace the files in ./infra/nginx/certs with a trusted certificate for a
+  # public deployment; the service will leave them untouched on later runs.
+  certs:
+    image: alpine/openssl:3.3.3
+    container_name: fincloud-certs
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /certs
+        if [ -s /certs/fincloud.crt ] && [ -s /certs/fincloud.key ]; then
+          echo "[certs] Existing certificate found - skipping generation."
+          exit 0
+        fi
+        openssl req -x509 -nodes -newkey rsa:2048 -sha256 -days 825 \
+          -keyout /certs/fincloud.key \
+          -out /certs/fincloud.crt \
+          -subj "/C=ID/ST=DKI Jakarta/L=Jakarta/O=FinCloud Cloud9/OU=DevOps/CN=localhost" \
+          -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+        chmod 600 /certs/fincloud.key
+        echo "[certs] Self-signed certificate generated in ./infra/nginx/certs"
+    volumes:
+      - ./infra/nginx/certs:/certs
+
+  # 6. Central Reverse Proxy (public entry point)
+  #   /         -> frontend:80
+  #   /api/     -> backend:5000
+  #   /storage/ -> minio:9000
+  # HTTP and HTTPS share the same routing rules (fincloud-locations.conf).
+  nginx:
+    image: nginx:alpine
+    container_name: fincloud-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-8080}:80"
+      - "${NGINX_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/nginx/fincloud-locations.conf:/etc/nginx/snippets/fincloud-locations.conf:ro
+      - ./infra/nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_started
+      minio:
+        condition: service_started
+      certs:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - fincloud-network
+
+  # 7. Node Exporter (host CPU, memory, disk & network metrics)
+  # The container reads the Docker Desktop VM/host through read-only mounts.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: fincloud-node-exporter
+    restart: unless-stopped
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/host/root"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+      # Exposes backup freshness metrics written by scripts/backup.ps1|backup.sh
+      - "--collector.textfile.directory=/var/lib/node_exporter/textfile_collector"
+    ports:
+      - "127.0.0.1:${NODE_EXPORTER_PORT:-9100}:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      - ./infra/node-exporter/textfile:/var/lib/node_exporter/textfile_collector:ro
+    networks:
+      - fincloud-network
+
+  # 8. cAdvisor (container CPU, memory, filesystem & status metrics)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.52.0
+    container_name: fincloud-cadvisor
+    restart: unless-stopped
+    command:
+      - "--docker_only=true"
+      - "--containerd=/run/containerd/containerd.sock"
+      - "--containerd-namespace=moby"
+      - "--housekeeping_interval=30s"
+      - "--disable_metrics=percpu,sched,tcp,udp,advtcp,process"
+    ports:
+      - "127.0.0.1:${CADVISOR_PORT:-8081}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      # Docker 29+ memakai containerd image store; cAdvisor membaca container
+      # lewat containerd API. Socket Docker sengaja TIDAK di-mount karena
+      # Docker factory gagal mengenali layer containerd dan menghapus container
+      # dari cache setelah resync (~5 menit).
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/lib/containerd/:/var/lib/containerd:ro
+      - /run/containerd/:/run/containerd:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - fincloud-network
+
+  # 9. Prometheus (metrics collection & alert rules)
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: fincloud-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - backend
+      - node-exporter
+      - cadvisor
+    networks:
+      - fincloud-network
+
+  # 10. Loki (centralized log aggregation, filesystem storage)
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: fincloud-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yml
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./infra/loki/loki-config.yml:/etc/loki/local-config.yml:ro
+      - loki_data:/loki
+    networks:
+      - fincloud-network
+
+  # 11. Promtail (ships Docker container logs to Loki)
+  promtail:
+    image: grafana/promtail:3.2.0
+    container_name: fincloud-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./infra/loki/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail_positions:/tmp
+    depends_on:
+      - loki
+    networks:
+      - fincloud-network
+
+  # 12. Grafana (dashboards & visualisation)
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: fincloud-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/var/lib/grafana/dashboards/fincloud-overview.json"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - fincloud-network
 
 volumes:
-  db_data:
+  mariadb_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  promtail_positions:
 
 networks:
-  cloud9-net:
+  fincloud-network:
     driver: bridge

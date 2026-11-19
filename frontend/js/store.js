@@ -1,17 +1,28 @@
 /**
- * FinCloud Reactive State Management & Storage
- * Handles user sessions, transaction CRUD, Indonesian currency formatting,
- * and persistent storage via localStorage.
+ * FinCloud state store.
+ *
+ * All financial data now comes from the Express REST API. The store keeps an
+ * in-memory cache so the view modules can stay simple, while every mutation
+ * goes through the API and invalidates the cache.
  */
 
-const STORAGE_KEYS = {
-  USER: 'fincloud_current_user',
-  THEME: 'fincloud_theme',
-  TRANSACTIONS: 'fincloud_transactions',
-  ACCOUNTS: 'fincloud_registered_users'
-};
+import { STORAGE_KEYS } from './config.js';
+import {
+  api,
+  getToken as getStoredToken,
+  setToken,
+  clearToken,
+  isTokenExpired,
+  resolveReceiptUrl
+} from './api.js';
 
-// Seed Categories conforming to docs/05-erd-draft.md
+const LEGACY_KEYS = [
+  'fincloud_transactions',
+  'fincloud_registered_users'
+];
+
+// Seed Categories conforming to docs/05-erd-draft.md. These names match the
+// database seed, so they can be sent as the `category` field to the API.
 export const CATEGORIES = {
   income: [
     { id: 'cat-inc-1', name: 'Salary', icon: 'briefcase', color: '#10b981' },
@@ -33,225 +44,345 @@ export const CATEGORIES = {
   ]
 };
 
-// Default Sample Seed Data
-const DEFAULT_TRANSACTIONS = [
-  {
-    id: 'tx-101',
-    type: 'income',
-    amount: 15000000,
-    category: 'Salary',
-    description: 'Gaji Bulanan Software Engineer Cloud9',
-    date: '2026-10-01',
-    receipt: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80',
-    receiptName: 'slip-gaji-okt-2026.pdf',
-    createdAt: '2026-10-01T09:00:00Z'
-  },
-  {
-    id: 'tx-102',
-    type: 'expense',
-    amount: 3200000,
-    category: 'Housing',
-    description: 'Sewa Apartemen & Maintenance Bulanan',
-    date: '2026-10-02',
-    receipt: 'https://images.unsplash.com/photo-1554224154-26032ffc0d07?w=600&auto=format&fit=crop&q=80',
-    receiptName: 'invoice-apt-oct.jpg',
-    createdAt: '2026-10-02T10:15:00Z'
-  },
-  {
-    id: 'tx-103',
-    type: 'expense',
-    amount: 850000,
-    category: 'Utilities',
-    description: 'Tagihan Listrik PLN & Internet Fiber 100Mbps',
-    date: '2026-10-03',
-    receipt: null,
-    receiptName: null,
-    createdAt: '2026-10-03T11:30:00Z'
-  },
-  {
-    id: 'tx-104',
-    type: 'expense',
-    amount: 1250000,
-    category: 'Food',
-    description: 'Belanja Mingguan Supermarket & Bahan Makanan',
-    date: '2026-10-04',
-    receipt: 'https://images.unsplash.com/photo-1554224155-1696413565d3?w=600&auto=format&fit=crop&q=80',
-    receiptName: 'struk-supermarket.jpg',
-    createdAt: '2026-10-04T15:20:00Z'
-  },
-  {
-    id: 'tx-105',
-    type: 'income',
-    amount: 4500000,
-    category: 'Business',
-    description: 'Jasa Konsultasi Arsitektur Cloud AWS & DevOps',
-    date: '2026-10-05',
-    receipt: null,
-    receiptName: null,
-    createdAt: '2026-10-05T14:00:00Z'
-  },
-  {
-    id: 'tx-106',
-    type: 'expense',
-    amount: 420000,
-    category: 'Transportation',
-    description: 'Bensin Pertamax & Saldo Tol Elektronik',
-    date: '2026-10-05',
-    receipt: null,
-    receiptName: null,
-    createdAt: '2026-10-05T17:45:00Z'
-  },
-  {
-    id: 'tx-107',
-    type: 'expense',
-    amount: 350000,
-    category: 'Healthcare',
-    description: 'Suplemen Vitamin & Pemeriksaan Rutin',
-    date: '2026-10-06',
-    receipt: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=600&auto=format&fit=crop&q=80',
-    receiptName: 'resep-apotek-kimia.jpg',
-    createdAt: '2026-10-06T12:10:00Z'
-  },
-  {
-    id: 'tx-108',
-    type: 'expense',
-    amount: 280000,
-    category: 'Entertainment',
-    description: 'Langganan Cloud Storage, Spotify, & Cinema',
-    date: '2026-10-07',
-    receipt: null,
-    receiptName: null,
-    createdAt: '2026-10-07T16:00:00Z'
-  },
-  {
-    id: 'tx-109',
-    type: 'income',
-    amount: 1200000,
-    category: 'Investment',
-    description: 'Dividen Saham Finansial & Kupon Obligasi Negara',
-    date: '2026-09-28',
-    receipt: null,
-    receiptName: null,
-    createdAt: '2026-09-28T08:30:00Z'
-  },
-  {
-    id: 'tx-110',
-    type: 'expense',
-    amount: 750000,
-    category: 'Shopping',
-    description: 'Buku Pemrograman Cloud Native & Keyboard Mouse',
-    date: '2026-09-25',
-    receipt: null,
-    receiptName: null,
-    createdAt: '2026-09-25T13:40:00Z'
+function safeParse(value) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    return null;
   }
-];
+}
+
+function toDateOnly(value) {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+
+  const raw = String(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
+}
+
+export function normalizeTransaction(transaction) {
+  if (!transaction) return null;
+
+  return {
+    ...transaction,
+    id: transaction.id,
+    type: transaction.type,
+    amount: Number(transaction.amount) || 0,
+    category: transaction.category || 'Other',
+    description: transaction.description || '',
+    date: toDateOnly(transaction.date),
+    receipt: resolveReceiptUrl(transaction.receipt),
+    receiptName: transaction.receiptName || null,
+    createdAt: transaction.createdAt || null
+  };
+}
+
+function normalizeDashboard(data) {
+  if (!data) return null;
+
+  return {
+    ...data,
+    currentBalance: Number(data.currentBalance) || 0,
+    totalIncome: Number(data.totalIncome) || 0,
+    totalExpense: Number(data.totalExpense) || 0,
+    monthlyIncome: Number(data.monthlyIncome) || 0,
+    monthlyExpense: Number(data.monthlyExpense) || 0,
+    transactionCount: Number(data.transactionCount) || 0,
+    topCategories: (data.topCategories || []).map((category) => ({
+      ...category,
+      total_amount: Number(category.total_amount) || 0
+    })),
+    recentTransactions: (data.recentTransactions || [])
+      .map(normalizeTransaction)
+      .filter(Boolean)
+  };
+}
 
 export const FinStore = {
-  // Current user state
+  _user: safeParse(localStorage.getItem(STORAGE_KEYS.USER)),
+  _transactions: [],
+  _transactionTotal: 0,
+  _transactionSummary: { totalIncome: 0, totalExpense: 0 },
+  _dashboard: null,
+  _monthly: [],
+  _categories: null,
+
+  /* ---------------------------------------------------------------- */
+  /* Session                                                          */
+  /* ---------------------------------------------------------------- */
+
+  clearLegacyMockData() {
+    LEGACY_KEYS.forEach((key) => localStorage.removeItem(key));
+  },
+
   getUser() {
-    const saved = localStorage.getItem(STORAGE_KEYS.USER);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
-    }
-    // Default demo user
-    return {
-      id: 1,
-      name: 'Feeandri',
-      email: 'feeandri@fincloud.app',
-      role: 'USER'
-    };
+    return this._user;
   },
 
   setUser(user) {
-    localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+    this._user = user;
+    if (user) {
+      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.USER);
+    }
   },
 
-  logout() {
-    localStorage.removeItem(STORAGE_KEYS.USER);
+  getToken() {
+    return getStoredToken();
   },
 
-  // Theme state
-  getTheme() {
-    return localStorage.getItem(STORAGE_KEYS.THEME) || 'dark';
+  isAuthenticated() {
+    const token = getStoredToken();
+    return Boolean(token) && !isTokenExpired(token) && Boolean(this._user);
   },
 
-  setTheme(theme) {
-    localStorage.setItem(STORAGE_KEYS.THEME, theme);
-    document.documentElement.setAttribute('data-theme', theme);
+  setSession({ token, user }) {
+    setToken(token);
+    this.setUser(user);
+    // Never reuse cached financial data across accounts.
+    this._transactions = [];
+    this._transactionTotal = 0;
+    this._transactionSummary = { totalIncome: 0, totalExpense: 0 };
+    this._dashboard = null;
+    this._monthly = [];
   },
 
-  // Transactions State
+  clearSession() {
+    clearToken();
+    this.setUser(null);
+    this._transactions = [];
+    this._transactionTotal = 0;
+    this._transactionSummary = { totalIncome: 0, totalExpense: 0 };
+    this._dashboard = null;
+    this._monthly = [];
+  },
+
+  async login(email, password) {
+    const response = await api.auth.login(email, password);
+    this.setSession({ token: response.token, user: response.user });
+    this.clearLegacyMockData();
+    return response.user;
+  },
+
+  async register(name, email, password) {
+    const response = await api.auth.register(name, email, password);
+    this.setSession({ token: response.token, user: response.user });
+    this.clearLegacyMockData();
+    return response.user;
+  },
+
+  async logout() {
+    try {
+      if (this.getToken()) {
+        await api.auth.logout();
+      }
+    } catch (error) {
+      // Best-effort: the local session is cleared even if the API is down.
+    } finally {
+      this.clearSession();
+    }
+  },
+
+  async verifySession() {
+    if (!this.isAuthenticated()) return null;
+
+    const response = await api.auth.profile();
+    this.setUser(response.user);
+    return response.user;
+  },
+
+  async updateProfile({ name, email }) {
+    const response = await api.auth.updateProfile({ name, email });
+    this.setUser(response.user);
+    return response.user;
+  },
+
+  /* ---------------------------------------------------------------- */
+  /* Transactions                                                     */
+  /* ---------------------------------------------------------------- */
+
+  async loadTransactions(params = {}) {
+    const response = await api.transactions.list(params);
+
+    this._transactions = (response.transactions || [])
+      .map(normalizeTransaction)
+      .filter(Boolean);
+    this._transactionTotal = Number(response.total ?? this._transactions.length) || 0;
+    this._transactionSummary = {
+      totalIncome: Number(response.summary?.totalIncome) || 0,
+      totalExpense: Number(response.summary?.totalExpense) || 0
+    };
+
+    return this._transactions;
+  },
+
   getTransactions() {
-    const saved = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
-    if (saved) {
+    return this._transactions;
+  },
+
+  getTransactionTotal() {
+    return this._transactionTotal;
+  },
+
+  getTransactionSummary() {
+    return this._transactionSummary;
+  },
+
+  toApiPayload(data) {
+    return {
+      type: data.type,
+      amount: Number(data.amount),
+      category: data.category,
+      description: data.description,
+      date: data.date
+    };
+  },
+
+  async addTransaction(data) {
+    const response = await api.transactions.create(this.toApiPayload(data));
+    let receiptError = null;
+
+    if (data.receiptFile) {
       try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed parsing stored transactions', e);
+        await api.transactions.uploadReceipt(response.transactionId, data.receiptFile);
+      } catch (error) {
+        receiptError = error.message;
       }
     }
-    this.saveTransactions(DEFAULT_TRANSACTIONS);
-    return DEFAULT_TRANSACTIONS;
+
+    this.invalidateData();
+    return { ...response, receiptError };
   },
 
-  saveTransactions(transactions) {
-    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(transactions));
-  },
+  async updateTransaction(id, data) {
+    await api.transactions.update(id, this.toApiPayload(data));
+    let receiptError = null;
 
-  addTransaction(data) {
-    const list = this.getTransactions();
-    const newTx = {
-      id: 'tx-' + Date.now(),
-      type: data.type || 'expense',
-      amount: parseFloat(data.amount) || 0,
-      category: data.category || 'Other',
-      description: data.description || 'Transaksi FinCloud',
-      date: data.date || new Date().toISOString().split('T')[0],
-      receipt: data.receipt || null,
-      receiptName: data.receiptName || null,
-      createdAt: new Date().toISOString()
-    };
-    list.unshift(newTx);
-    this.saveTransactions(list);
-    return newTx;
-  },
-
-  updateTransaction(id, updatedData) {
-    const list = this.getTransactions();
-    const idx = list.findIndex(t => t.id === id);
-    if (idx !== -1) {
-      list[idx] = { ...list[idx], ...updatedData, updatedAt: new Date().toISOString() };
-      this.saveTransactions(list);
-      return list[idx];
+    if (data.receiptFile) {
+      try {
+        await api.transactions.uploadReceipt(id, data.receiptFile);
+      } catch (error) {
+        receiptError = error.message;
+      }
+    } else if (data.removeReceipt) {
+      try {
+        await api.transactions.deleteReceipt(id);
+      } catch (error) {
+        receiptError = error.message;
+      }
     }
-    return null;
+
+    this.invalidateData();
+    return { success: true, receiptError };
   },
 
-  deleteTransaction(id) {
-    const list = this.getTransactions();
-    const filtered = list.filter(t => t.id !== id);
-    this.saveTransactions(filtered);
+  async deleteTransaction(id) {
+    await api.transactions.remove(id);
+    this._transactions = this._transactions.filter(
+      (transaction) => String(transaction.id) !== String(id)
+    );
+    this._transactionTotal = Math.max(this._transactionTotal - 1, 0);
+    this.invalidateData(false);
     return true;
   },
 
-  // Financial Calculations
+  async refreshReceiptUrl(id) {
+    const response = await api.transactions.receiptUrl(id);
+    return resolveReceiptUrl(response.url);
+  },
+
+  invalidateData(clearTransactions = true) {
+    if (clearTransactions) this._transactions = [];
+    this._dashboard = null;
+    this._monthly = [];
+  },
+
+  /* ---------------------------------------------------------------- */
+  /* Dashboard & reports                                              */
+  /* ---------------------------------------------------------------- */
+
+  async loadDashboard() {
+    const response = await api.dashboard.get();
+    this._dashboard = normalizeDashboard(response.data);
+    return this._dashboard;
+  },
+
+  getDashboardData() {
+    return this._dashboard;
+  },
+
+  async loadMonthlyReport(year = new Date().getFullYear()) {
+    const response = await api.reports.monthly(year);
+    this._monthly = (response.monthlyStats || []).map((row) => ({
+      month: Number(row.month),
+      income: Number(row.income) || 0,
+      expense: Number(row.expense) || 0,
+      count: Number(row.count) || 0
+    }));
+    return this._monthly;
+  },
+
+  getMonthlyReport() {
+    return this._monthly;
+  },
+
+  async loadCategoryReport(params = {}) {
+    const response = await api.reports.category(params);
+    return (response.categories || []).map((category) => ({
+      ...category,
+      total_amount: Number(category.total_amount) || 0,
+      transaction_count: Number(category.transaction_count) || 0
+    }));
+  },
+
+  async loadCategories() {
+    const response = await api.transactions.categories();
+    this._categories = response.categories || [];
+    return this._categories;
+  },
+
+  getCategories() {
+    return this._categories;
+  },
+
+  async loadSystemHealth() {
+    const health = await api.health.check();
+
+    let adminStatus = null;
+    if (this.getUser()?.role === 'ADMIN') {
+      try {
+        adminStatus = await api.admin.systemStatus();
+      } catch (error) {
+        adminStatus = null;
+      }
+    }
+
+    return { health, adminStatus };
+  },
+
   getFinancialMetrics(filterMonth = null) {
-    let list = this.getTransactions();
+    let list = this._transactions;
+
     if (filterMonth) {
-      list = list.filter(t => t.date.startsWith(filterMonth));
+      list = list.filter((transaction) => transaction.date.startsWith(filterMonth));
     }
 
     const totalIncome = list
-      .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
+      .filter((transaction) => transaction.type === 'income')
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
 
     const totalExpense = list
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amount, 0);
+      .filter((transaction) => transaction.type === 'expense')
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
 
     const balance = totalIncome - totalExpense;
-    const savingsRate = totalIncome > 0 ? Math.round(((totalIncome - totalExpense) / totalIncome) * 100) : 0;
+    const savingsRate =
+      totalIncome > 0 ? Math.round((balance / totalIncome) * 100) : 0;
 
     return {
       totalIncome,
@@ -262,17 +393,19 @@ export const FinStore = {
     };
   },
 
-  // System Health mock (Postgres, MinIO, Prometheus)
-  getSystemHealth() {
-    return {
-      api: { status: 'ONLINE', latency: '24ms' },
-      postgres: { status: 'ONLINE', pool: '8/20' },
-      minio: { status: 'ONLINE', storage: '2.4 GB / 100 GB' },
-      monitoring: { status: 'ACTIVE', exporter: 'Prometheus v2.45' }
-    };
+  /* ---------------------------------------------------------------- */
+  /* Theme & formatting                                               */
+  /* ---------------------------------------------------------------- */
+
+  getTheme() {
+    return localStorage.getItem(STORAGE_KEYS.THEME) || 'dark';
   },
 
-  // Formatting Utilities
+  setTheme(theme) {
+    localStorage.setItem(STORAGE_KEYS.THEME, theme);
+    document.documentElement.setAttribute('data-theme', theme);
+  },
+
   formatCurrency(amount) {
     const num = Number(amount) || 0;
     return 'Rp ' + num.toLocaleString('id-ID');
@@ -280,22 +413,24 @@ export const FinStore = {
 
   formatDate(dateStr) {
     if (!dateStr) return '-';
+
     try {
-      const parts = dateStr.split('-');
+      const parts = String(dateStr).slice(0, 10).split('-');
       if (parts.length === 3) {
-        const d = new Date(parts[0], parts[1] - 1, parts[2]);
-        return d.toLocaleDateString('id-ID', {
+        const date = new Date(parts[0], parts[1] - 1, parts[2]);
+        return date.toLocaleDateString('id-ID', {
           day: 'numeric',
           month: 'short',
           year: 'numeric'
         });
       }
+
       return new Date(dateStr).toLocaleDateString('id-ID', {
         day: 'numeric',
         month: 'short',
         year: 'numeric'
       });
-    } catch (e) {
+    } catch (error) {
       return dateStr;
     }
   }

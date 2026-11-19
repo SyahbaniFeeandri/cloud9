@@ -3,10 +3,12 @@
   "version": "1.0.0",
   "description": "FinCloud - Cloud-Based Financial Management and Monitoring Platform Frontend UI",
   "main": "index.html",
+  "type": "module",
   "scripts": {
     "start": "npx -y serve . -l 3000",
     "dev": "npx -y serve . -l 3000",
-    "preview": "npx -y serve . -l 3000"
+    "preview": "npx -y serve . -l 3000",
+    "test": "node --test \"tests/**/*.test.js\""
   },
   "keywords": [
     "fincloud",
