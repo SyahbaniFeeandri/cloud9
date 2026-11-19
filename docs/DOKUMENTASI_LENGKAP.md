@@ -55,6 +55,7 @@ cloud9-fincloudApp/
 │   ├── 22-test-checklist-qa-report.md # Laporan QA & checklist pengujian
 │   ├── 23-sop-backup-recovery.md      # SOP backup, restore & disaster recovery
 │   ├── 24-backup-drill-report.md      # Bukti pelaksanaan DR drill
+│   ├── 25-infrastruktur-finansial-dan-komputasi-cloud.md # Infrastruktur finansial & cloud (+13 diagram)
 │   ├── DOKUMENTASI_LENGKAP.md         # Dokumen ini
 │   └── diagrams/             # Diagram arsitektur (.mmd & .md) dan ERD
 ├── frontend/                 # Aplikasi antarmuka pengguna web (SPA)
@@ -315,6 +316,7 @@ troubleshooting dijelaskan lengkap di:
 
 - [`23-sop-backup-recovery.md`](23-sop-backup-recovery.md) — SOP backup & DR
 - [`24-backup-drill-report.md`](24-backup-drill-report.md) — bukti DR drill
+- [`25-infrastruktur-finansial-dan-komputasi-cloud.md`](25-infrastruktur-finansial-dan-komputasi-cloud.md) — infrastruktur finansial & komputasi cloud (13 diagram)
 - [`../scripts/README.md`](../scripts/README.md) — referensi parameter script
 
 > Folder `backups/` berisi data pengguna dan hash password sehingga sudah

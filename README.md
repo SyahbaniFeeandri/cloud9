@@ -172,6 +172,7 @@ cloud9-fincloudApp/
 │   ├── 22-test-checklist-qa-report.md # Laporan QA & checklist pengujian
 │   ├── 23-sop-backup-recovery.md      # SOP backup, restore & disaster recovery
 │   ├── 24-backup-drill-report.md      # Laporan DR drill backup & restore
+│   ├── 25-infrastruktur-finansial-dan-komputasi-cloud.md # Infrastruktur finansial & cloud (+13 diagram)
 │   ├── DOKUMENTASI_LENGKAP.md         # Dokumentasi lengkap proyek FinCloud
 │   └── diagrams/             # Diagram arsitektur (.mmd & .md) dan ERD
 ├── frontend/                 # Aplikasi Single Page Application FinCloud
@@ -727,6 +728,7 @@ Mengikuti panduan [`docs/04-branching-rules.md`](file:///c:/Users/Feeandri/cloud
 - 🧪 [Test Checklist & QA Report Minggu 7 (docs/22-test-checklist-qa-report.md)](file:///c:/Users/Feeandri/cloud9-fincloudApp/docs/22-test-checklist-qa-report.md)
 - 💾 [SOP Backup & Disaster Recovery (docs/23-sop-backup-recovery.md)](file:///c:/Users/Feeandri/cloud9-fincloudApp/docs/23-sop-backup-recovery.md)
 - 🧯 [Laporan DR Drill Backup & Restore (docs/24-backup-drill-report.md)](file:///c:/Users/Feeandri/cloud9-fincloudApp/docs/24-backup-drill-report.md)
+- 🏗️ [Infrastruktur Finansial & Komputasi Cloud (docs/25-infrastruktur-finansial-dan-komputasi-cloud.md)](file:///c:/Users/Feeandri/cloud9-fincloudApp/docs/25-infrastruktur-finansial-dan-komputasi-cloud.md)
 - 🛠️ [Panduan Script Backup & Restore (scripts/README.md)](file:///c:/Users/Feeandri/cloud9-fincloudApp/scripts/README.md)
 - 🧪 [Panduan End-to-End Test (tests/e2e/README.md)](file:///c:/Users/Feeandri/cloud9-fincloudApp/tests/e2e/README.md)
 - 💻 [Dokumentasi Antarmuka Frontend (frontend/README.md)](file:///c:/Users/Feeandri/cloud9-fincloudApp/frontend/README.md)
