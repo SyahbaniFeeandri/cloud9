@@ -10,7 +10,8 @@ Dokumen ini menjelaskan arsitektur sistem **FinCloud (Cloud-Based Financial Mana
 flowchart TB
     %% =========================================================================
     %% FINCLOUD SYSTEM ARCHITECTURE DIAGRAM
-    %% Components: Frontend, Nginx, Backend, MariaDB, MinIO, Prometheus, Grafana
+    %% Components: Frontend, Nginx, Backend, MariaDB, MinIO,
+    %%             Prometheus, Node Exporter, cAdvisor, Loki, Promtail, Grafana
     %% =========================================================================
 
     subgraph CLIENT_TIER [" 🌐 CLIENT / PRESENTATION TIER "]
@@ -21,36 +22,40 @@ flowchart TB
 
     subgraph INGRESS_TIER [" 🛡️ EDGE & REVERSE PROXY TIER "]
         direction TB
-        Nginx["🌐 Nginx Reverse Proxy & Web Server<br/>Port: 80 / 443 / 8080<br/>• Static Asset Serving<br/>• Reverse Proxy /api/ & /minio/<br/>• SSL Termination & Security Headers"]
+        Nginx["🌐 Nginx Central Reverse Proxy<br/>Public Port: 8080 (HTTP) / 8443 (HTTPS)<br/>• Serves SPA via frontend:80<br/>• Proxy /api/ → backend:5000<br/>• Proxy /storage/ → minio:9000<br/>• TLS, Security Headers & Request Limits"]
     end
 
     subgraph APP_TIER [" ⚙️ APPLICATION & LOGIC TIER "]
         direction TB
-        FrontendSPA["💻 FinCloud Frontend SPA<br/>HTML5, Vanilla CSS, JS ES6<br/>Port: 3000 / Static Serve"]
-        BackendAPI["⚡ FinCloud Backend API<br/>RESTful Service & Business Logic<br/>Port: 8000<br/>• JWT Authentication & RBAC<br/>• Transaction CRUD & Report Analytics<br/>• S3 Client SDK (Upload Manager)<br/>• Metrics Exporter (/metrics)"]
+        FrontendSPA["💻 FinCloud Frontend SPA<br/>HTML5, Vanilla CSS, JS ES6<br/>Internal Port: 80 (static)"]
+        BackendAPI["⚡ FinCloud Backend API<br/>RESTful Service & Business Logic<br/>Internal Port: 5000<br/>• JWT Authentication & RBAC<br/>• Transaction CRUD & Report Analytics<br/>• S3 Client SDK (Upload Manager)<br/>• Metrics Exporter (/metrics)"]
     end
 
     subgraph STORAGE_TIER [" 💾 PERSISTENCE & STORAGE TIER "]
         direction TB
-        MariaDB[("🗄️ MariaDB Database<br/>Port: 3306<br/>• Users & Roles<br/>• Transactions & Categories<br/>• Receipts Metadata & Audit Logs")]
-        MinIO[("🪣 MinIO Object Storage (S3-Compatible)<br/>API Port: 9000 | Console: 9001<br/>• Bucket: fincloud-receipts<br/>• Struk Pembayaran & File Invoice")]
+        MariaDB[("🗄️ MariaDB Database<br/>Internal Port: 3306<br/>• Users & Roles<br/>• Transactions & Categories<br/>• Receipts Metadata & Audit Logs")]
+        MinIO[("🪣 MinIO Object Storage (S3-Compatible)<br/>Internal API: 9000 | Console: 9001<br/>• Bucket: fincloud-receipts<br/>• Struk Pembayaran & File Invoice")]
     end
 
     subgraph MONITORING_TIER [" 📊 MONITORING & OBSERVABILITY TIER "]
         direction TB
-        Prometheus["🔥 Prometheus Time-Series Server<br/>Port: 9090<br/>• Scrapes Metrik /metrics<br/>• Storage TSDB & Alert Rules"]
-        Grafana["📈 Grafana Visualization Platform<br/>Port: 3001<br/>• Dashboard Kesehatan Sistem<br/>• QPS, Latency, Error Rate (RED)<br/>• DB Connections & Storage Usage"]
+        Prometheus["🔥 Prometheus Time-Series Server<br/>Loopback Port: 9090<br/>• Scrapes 4 Job (Backend, Self, Host, Container)<br/>• Storage TSDB 15 Hari & 10 Alert Rules"]
+        NodeExporter["🖥️ Node Exporter<br/>Loopback Port: 9100<br/>• CPU, Memory, Disk & Network Host"]
+        Cadvisor["📦 cAdvisor<br/>Loopback Port: 8081<br/>• CPU, Memory & Status per Container"]
+        Loki["🗃️ Loki Log Aggregation<br/>Loopback Port: 3100<br/>• Log Terpusat, Retensi 7 Hari"]
+        Promtail["🚚 Promtail Log Shipper<br/>Internal Only<br/>• Docker Socket → Loki"]
+        Grafana["📈 Grafana Visualization Platform<br/>Loopback Port: 3001<br/>• Overview (RED), Infrastructure & Logs<br/>• Audit Trail via Loki"]
     end
 
     %% Client Interactions
-    User -->|"HTTP / HTTPS Requests (Port 80/443)"| Nginx
+    User -->|"HTTP / HTTPS Requests (Port 8080/8443)"| Nginx
     Admin -->|"Akses Web Admin & Monitoring"| Nginx
-    Admin -.->|"Direct Dashboard Access (Port 3001)"| Grafana
+    Admin -.->|"Loopback Dashboard (Port 3001)"| Grafana
 
     %% Nginx Routing
     Nginx -->|"Proxy Path: / (Static SPA Assets)"| FrontendSPA
-    Nginx -->|"Proxy Path: /api/v1/* (REST API Calls)"| BackendAPI
-    Nginx -->|"Proxy Path: /storage/* (Direct Struk View)"| MinIO
+    Nginx -->|"Proxy Path: /api/* (REST API Calls)"| BackendAPI
+    Nginx -->|"Proxy Path: /storage/* (Presigned Receipts)"| MinIO
 
     %% Frontend to Backend Interaction
     FrontendSPA -->|"REST API (JSON Data & JWT Token)"| BackendAPI
@@ -60,13 +65,19 @@ flowchart TB
     BackendAPI -->|"S3 API Protocol (HTTP Port 9000)<br/>PutObject / GetObject Bukti Struk"| MinIO
 
     %% Observability Scraping (Prometheus Pull Model)
-    Prometheus -.->|"Scrape /metrics (Port 8000)"| BackendAPI
-    Prometheus -.->|"Scrape Nginx Exporter (Port 9113)"| Nginx
-    Prometheus -.->|"Scrape mysqld_exporter (Port 9104)"| MariaDB
-    Prometheus -.->|"Scrape /minio/v2/metrics (Port 9000)"| MinIO
+    Prometheus -.->|"Scrape /metrics (Port 5000)"| BackendAPI
+    Prometheus -.->|"Self-scrape (Port 9090)"| Prometheus
+    Prometheus -.->|"Scrape (Port 9100)"| NodeExporter
+    Prometheus -.->|"Scrape (Port 8080)"| Cadvisor
 
-    %% Grafana Data Source
-    Grafana -->|"PromQL Queries (Data Source Port 9090)"| Prometheus
+    %% Log Shipping (Push Model)
+    Promtail -->|"Push Log API (Port 3100)"| Loki
+    Promtail -.->|"Baca Log Container (Docker Socket)"| BackendAPI
+    Promtail -.->|"Baca Log Container (Docker Socket)"| Nginx
+
+    %% Grafana Data Sources
+    Grafana -->|"PromQL Queries (Port 9090)"| Prometheus
+    Grafana -->|"LogQL Queries (Port 3100)"| Loki
 
     %% Styling & Classes
     classDef clientClass fill:#2B6CB0,stroke:#1A365D,stroke-width:2px,color:#FFFFFF;
@@ -82,7 +93,7 @@ flowchart TB
     class FrontendSPA,BackendAPI appClass;
     class MariaDB dbClass;
     class MinIO s3Class;
-    class Prometheus monitorClass;
+    class Prometheus,NodeExporter,Cadvisor,Loki,Promtail monitorClass;
     class Grafana vizClass;
 ```
 
@@ -93,12 +104,16 @@ flowchart TB
 | Komponen | Layer / Tier | Port Standar | Peran & Tanggung Jawab Utama |
 |---|---|---|---|
 | **Frontend (SPA)** | Client / Web App | `3000` | Antarmuka pengguna berbasis Single Page Application (HTML5, Vanilla CSS, JS ES6). Mengelola routing sisi klien (`#/dashboard`, `#/transactions`, `#/reports`), state management, visualisasi grafik canvas, dan interaksi formulir. |
-| **Nginx** | Edge / Ingress Reverse Proxy | `80` / `443` / `8080` | Pintu gerbang lalu lintas masuk (*single point of entry*), menyajikan berkas statis frontend, melakukan *reverse proxy* ke API backend (`/api/`), routing ke MinIO (`/storage/`), terminasi SSL/TLS, serta menerapkan *security headers* dan *rate limiting*. |
+| **Nginx** | Edge / Ingress Reverse Proxy | **`8080`** (HTTP) / **`8443`** (HTTPS, public) | Pintu gerbang tunggal (*single point of entry*): menyajikan SPA melalui `frontend:80`, reverse proxy ke API (`/api/`), reverse proxy objek struk (`/storage/`), terminasi SSL/TLS, serta *security headers* dan batas ukuran request. Service lain hanya loopback/internal. |
 | **Backend API** | Application Logic | `8000` | Core service RESTful API. Memproses autentikasi JWT & Role-Based Access Control (RBAC), kalkulasi agregasi finansial, validasi input, transaksi basis data, komunikasi S3 SDK dengan MinIO, dan mengekspos endpoint metrik `/metrics`. |
 | **MariaDB** | Relational Database | `3306` | Basis data relasional ACID untuk menyimpan entitas terstruktur: `roles`, `users`, `categories`, `transactions`, `receipts` (metadata berkas), dan `audit_logs`. |
 | **MinIO** | Object Storage (S3-Compatible) | `9000` (API)<br/>`9001` (Console) | Penyimpanan objek terdistribusi berkinerja tinggi untuk berkas biner non-relasional, seperti gambar struk bukti pembayaran (*receipts*), faktur, atau dokumen PDF transaksi dalam bucket `fincloud-receipts`. |
-| **Prometheus** | Monitoring & Alerting | `9090` | *Time-series metrics engine* yang secara berkala melakukan *pull/scraping* metrik operasional dari endpoint `/metrics` Backend, Nginx exporter, MariaDB exporter (`mysqld_exporter`), dan MinIO metrics endpoint. Menyediakan *PromQL engine* dan evaluasi *alerting rules*. |
-| **Grafana** | Visualisasi & Observabilitas | `3001` | Antarmuka visual analitik metrik real-time. Menghubungkan Prometheus sebagai data source untuk menampilkan dashboard kesehatan server (*RED metrics*: Rate, Errors, Duration), pemakaian memori/CPU, throughput transaksi, dan status koneksi storage. |
+| **Prometheus** | Monitoring & Alerting | `9090` | *Time-series metrics engine* yang melakukan *pull/scraping* 4 job (backend `/metrics`, self-scrape, Node Exporter, cAdvisor) setiap 15 detik. Menyediakan *PromQL engine*, penyimpanan TSDB 15 hari, serta evaluasi 10 *alerting rules* (`infra/prometheus/alert.rules.yml`). |
+| **Node Exporter** | Host Metrics | `9100` | Mengekspos metrik tingkat host (CPU, memory, filesystem, network) dari `/proc` dan `/sys` Docker host untuk di-scrape Prometheus. |
+| **cAdvisor** | Container Metrics | `8081` | Mengekspos metrik per container (CPU, memory working set, filesystem, status) sehingga konsumsi tiap service FinCloud dapat dipantau. |
+| **Loki** | Log Aggregation | `3100` | Mengagregasi log seluruh container dengan penyimpanan filesystem dan retensi 7 hari. Menjadi datasource LogQL di Grafana. |
+| **Promtail** | Log Shipper | internal | Menemukan container lewat Docker socket, memberi label `service`/`container`/`stream`, lalu mengirim log ke Loki. |
+| **Grafana** | Visualisasi & Observabilitas | `3001` | Antarmuka visual analitik metrik dan log real-time. Tiga dashboard ter-provision otomatis: **FinCloud Overview** (*RED metrics*), **Infrastructure & Containers**, dan **Logs & Audit Trail** (Prometheus + Loki). |
 
 ---
 
@@ -106,7 +121,7 @@ flowchart TB
 
 ### A. Alur Transaksi & Upload Bukti Pembayaran (Write Path)
 1. **Pengguna** membuka halaman Transaksi pada browser dan mengunggah struk bukti pembayaran.
-2. Request `multipart/form-data` dikirim melalui **Nginx** via rute `/api/v1/transactions`.
+2. Request `multipart/form-data` dikirim melalui **Nginx** via rute `/api/transactions`.
 3. **Backend API** memverifikasi token JWT pengguna dan memproses payload.
 4. Berkas gambar struk dikirim oleh backend ke **MinIO** menggunakan S3 API `PutObject` ke dalam bucket `fincloud-receipts`. MinIO mengembalikan *Object Key / URL*.
 5. Metadata transaksi beserta *Object Key* struk disimpan ke dalam tabel `transactions` dan `receipts` pada **MariaDB**.
@@ -114,15 +129,17 @@ flowchart TB
 
 ### B. Alur Pembacaan Laporan & Dashboard (Read Path)
 1. Pengguna mengakses `#/dashboard` atau `#/reports`.
-2. Frontend meminta agregasi data melalui endpoint `/api/v1/reports/summary`.
+2. Frontend meminta agregasi data melalui endpoint `/api/reports/...`.
 3. **Backend API** mengeksekusi kueri agregasi SQL (`SUM`, `COUNT`, `GROUP BY`) ke **MariaDB**.
 4. Data JSON dikembalikan dan dirender oleh frontend ke dalam grafik Canvas (*Bar Chart* dan *Donut Chart*).
 
-### C. Alur Monitoring & Observabilitas (Metrics Path)
+### C. Alur Monitoring & Observabilitas (Metrics & Logs Path)
 1. Setiap interval (misalnya per 15 detik), **Prometheus** melakukan *HTTP GET* scraping ke target:
-   - Backend API (`http://backend:8000/metrics`)
-   - MariaDB Exporter (`http://mariadb-exporter:9104/metrics`)
-   - Nginx Exporter (`http://nginx-exporter:9113/metrics`)
-   - MinIO Cluster Metrics (`http://minio:9000/minio/v2/metrics/cluster`)
-2. Metrik disimpan ke dalam basis data *Time-Series (TSDB)* Prometheus.
-3. Administrator membuka **Grafana** di port `3001` untuk memantau performa sistem secara visual melalui kueri *PromQL*.
+   - Backend API (`http://backend:5000/metrics`)
+   - Prometheus itu sendiri (`http://localhost:9090/metrics`)
+   - Node Exporter host (`http://node-exporter:9100/metrics`)
+   - cAdvisor container (`http://cadvisor:8080/metrics`)
+2. Metrik disimpan ke dalam basis data *Time-Series (TSDB)* Prometheus dan dievaluasi terhadap 10 *alert rules* (backend/error rate/latency, DB/storage, host CPU/memory/disk, exporter down).
+3. **Promtail** membaca log stdout/stderr seluruh container lewat Docker socket, memberi label Compose (`service`, `container`, `stream`), lalu mengirimnya ke **Loki**.
+4. Audit event backend ditulis ganda: ke tabel `audit_logs` di MariaDB **dan** stdout terstruktur `{"level":"audit",...}` sehingga ikut terkirim ke Loki.
+5. Administrator membuka **Grafana** di port `3001` untuk memantau performa sistem secara visual melalui kueri *PromQL* dan menelusuri log/audit melalui *LogQL*.

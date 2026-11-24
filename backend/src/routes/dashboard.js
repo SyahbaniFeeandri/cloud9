@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../config/db.js';
+import { presignObject } from '../config/storage.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = Router();
@@ -54,7 +55,7 @@ router.get('/', async (req, res) => {
     const [recentTransactions] = await pool.query(
       `SELECT t.id, t.transaction_type as type, t.amount, t.description, t.transaction_date as date,
               c.name as category, c.icon as category_icon, c.color as category_color,
-              r.object_url as receipt
+              r.object_key as receiptKey, r.object_url as receiptPath, r.filename as receiptName
        FROM transactions t
        JOIN categories c ON t.category_id = c.id
        LEFT JOIN receipts r ON r.transaction_id = t.id
@@ -62,6 +63,17 @@ router.get('/', async (req, res) => {
        ORDER BY t.transaction_date DESC, t.id DESC
        LIMIT 5`,
       [userId]
+    );
+
+    const recentWithReceipts = await Promise.all(
+      recentTransactions.map(async (transaction) => {
+        const { receiptKey, receiptPath, ...rest } = transaction;
+        return {
+          ...rest,
+          receipt: receiptKey ? await presignObject(receiptKey, undefined, req) : null,
+          receiptPath: receiptPath || null
+        };
+      })
     );
 
     return res.json({
@@ -74,7 +86,7 @@ router.get('/', async (req, res) => {
         monthlyExpense: parseFloat(monthTotals[0].monthly_expense),
         transactionCount: totals[0].total_count,
         topCategories,
-        recentTransactions
+        recentTransactions: recentWithReceipts
       }
     });
   } catch (error) {

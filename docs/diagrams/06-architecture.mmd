@@ -1,7 +1,8 @@
 flowchart TB
     %% =========================================================================
     %% FINCLOUD SYSTEM ARCHITECTURE DIAGRAM
-    %% Components: Frontend, Nginx, Backend, MariaDB, MinIO, Prometheus, Grafana
+    %% Components: Frontend, Nginx, Backend, MariaDB, MinIO,
+    %%             Prometheus, Node Exporter, cAdvisor, Loki, Promtail, Grafana
     %% =========================================================================
 
     subgraph CLIENT_TIER [" 🌐 CLIENT / PRESENTATION TIER "]
@@ -12,13 +13,13 @@ flowchart TB
 
     subgraph INGRESS_TIER [" 🛡️ EDGE & REVERSE PROXY TIER "]
         direction TB
-        Nginx["🌐 Nginx Reverse Proxy & Web Server<br/>Port: 80 / 443 / 8080<br/>• Static Asset Serving<br/>• Reverse Proxy /api/ & /minio/<br/>• SSL Termination & Security Headers"]
+        Nginx["🌐 Nginx Central Reverse Proxy<br/>Public Port: 8080 (HTTP) / 8443 (HTTPS)<br/>• Serves SPA via frontend:80<br/>• Proxy /api/ → backend:5000<br/>• Proxy /storage/ → minio:9000<br/>• TLS, Security Headers & Request Limits"]
     end
 
     subgraph APP_TIER [" ⚙️ APPLICATION & LOGIC TIER "]
         direction TB
-        FrontendSPA["💻 FinCloud Frontend SPA<br/>HTML5, Vanilla CSS, JS ES6<br/>Port: 3000 / Internal Web Assets"]
-        BackendAPI["⚡ FinCloud Backend API<br/>RESTful Service & Business Logic<br/>Port: 8000 / 5000<br/>• JWT Authentication & RBAC<br/>• Transaction CRUD & Report Analytics<br/>• S3 Client SDK (Upload Manager)<br/>• Metrics Exporter (/metrics)"]
+        FrontendSPA["💻 FinCloud Frontend SPA<br/>HTML5, Vanilla CSS, JS ES6<br/>Internal Port: 80 (static)"]
+        BackendAPI["⚡ FinCloud Backend API<br/>RESTful Service & Business Logic<br/>Internal Port: 5000<br/>• JWT Authentication & RBAC<br/>• Transaction CRUD & Report Analytics<br/>• S3 Client SDK (Upload Manager)<br/>• Metrics Exporter (/metrics)"]
     end
 
     subgraph STORAGE_TIER [" 💾 PERSISTENCE & STORAGE TIER "]
@@ -29,19 +30,23 @@ flowchart TB
 
     subgraph MONITORING_TIER [" 📊 MONITORING & OBSERVABILITY TIER "]
         direction TB
-        Prometheus["🔥 Prometheus Time-Series Server<br/>Port: 9090<br/>• Scrapes Metrik /metrics<br/>• Storage TSDB & Alert Rules"]
-        Grafana["📈 Grafana Visualization Platform<br/>Port: 3001<br/>• Dashboard Kesehatan Sistem<br/>• QPS, Latency, Error Rate (RED)<br/>• DB Connections & Storage Usage"]
+        Prometheus["🔥 Prometheus Time-Series Server<br/>Loopback Port: 9090<br/>• Scrapes 4 Job (Backend, Self, Host, Container)<br/>• Storage TSDB 15 Hari & 10 Alert Rules"]
+        NodeExporter["🖥️ Node Exporter<br/>Loopback Port: 9100<br/>• CPU, Memory, Disk & Network Host"]
+        Cadvisor["📦 cAdvisor<br/>Loopback Port: 8081<br/>• CPU, Memory & Status per Container"]
+        Loki["🗃️ Loki Log Aggregation<br/>Loopback Port: 3100<br/>• Log Terpusat, Retensi 7 Hari"]
+        Promtail["🚚 Promtail Log Shipper<br/>Internal Only<br/>• Docker Socket → Loki"]
+        Grafana["📈 Grafana Visualization Platform<br/>Loopback Port: 3001<br/>• Overview (RED), Infrastructure & Logs<br/>• Audit Trail via Loki"]
     end
 
     %% Client Interactions
-    User -->|"HTTP / HTTPS Requests (Port 80/443)"| Nginx
+    User -->|"HTTP / HTTPS Requests (Port 8080/8443)"| Nginx
     Admin -->|"Akses Web Admin & Monitoring"| Nginx
-    Admin -.->|"Direct Dashboard Access (Port 3001)"| Grafana
+    Admin -.->|"Loopback Dashboard (Port 3001)"| Grafana
 
     %% Nginx Routing
     Nginx -->|"Proxy Path: / (Static SPA Assets)"| FrontendSPA
-    Nginx -->|"Proxy Path: /api/v1/* (REST API Calls)"| BackendAPI
-    Nginx -->|"Proxy Path: /storage/* (Direct Struk View)"| MinIO
+    Nginx -->|"Proxy Path: /api/* (REST API Calls)"| BackendAPI
+    Nginx -->|"Proxy Path: /storage/* (Presigned Receipts)"| MinIO
 
     %% Frontend to Backend Interaction
     FrontendSPA -->|"REST API (JSON Data & JWT Token)"| BackendAPI
@@ -51,13 +56,19 @@ flowchart TB
     BackendAPI -->|"S3 API Protocol (HTTP Port 9000)<br/>PutObject / GetObject Bukti Struk"| MinIO
 
     %% Observability Scraping (Prometheus Pull Model)
-    Prometheus -.->|"Scrape /metrics (Port 8000)"| BackendAPI
-    Prometheus -.->|"Scrape Nginx Exporter (Port 9113)"| Nginx
-    Prometheus -.->|"Scrape mysqld_exporter (Port 9104)"| MariaDB
-    Prometheus -.->|"Scrape /minio/v2/metrics (Port 9000)"| MinIO
+    Prometheus -.->|"Scrape /metrics (Port 5000)"| BackendAPI
+    Prometheus -.->|"Self-scrape (Port 9090)"| Prometheus
+    Prometheus -.->|"Scrape (Port 9100)"| NodeExporter
+    Prometheus -.->|"Scrape (Port 8080)"| Cadvisor
 
-    %% Grafana Data Source
-    Grafana -->|"PromQL Queries (Data Source Port 9090)"| Prometheus
+    %% Log Shipping (Push Model)
+    Promtail -->|"Push Log API (Port 3100)"| Loki
+    Promtail -.->|"Baca Log Container (Docker Socket)"| BackendAPI
+    Promtail -.->|"Baca Log Container (Docker Socket)"| Nginx
+
+    %% Grafana Data Sources
+    Grafana -->|"PromQL Queries (Port 9090)"| Prometheus
+    Grafana -->|"LogQL Queries (Port 3100)"| Loki
 
     %% Styling & Classes
     classDef clientClass fill:#2B6CB0,stroke:#1A365D,stroke-width:2px,color:#FFFFFF;
@@ -73,5 +84,5 @@ flowchart TB
     class FrontendSPA,BackendAPI appClass;
     class MariaDB dbClass;
     class MinIO s3Class;
-    class Prometheus monitorClass;
+    class Prometheus,NodeExporter,Cadvisor,Loki,Promtail monitorClass;
     class Grafana vizClass;

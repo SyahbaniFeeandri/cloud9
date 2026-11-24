@@ -1,0 +1,146 @@
+groups:
+  - name: fincloud-api
+    interval: 30s
+    rules:
+      - alert: FinCloudBackendDown
+        expr: up{job="fincloud-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "FinCloud backend is down"
+          description: "Prometheus cannot scrape the FinCloud backend for more than 1 minute."
+
+      - alert: FinCloudHighErrorRate
+        expr: |
+          sum(rate(fincloud_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(fincloud_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FinCloud API 5xx error rate is above 5%"
+          description: "More than 5% of requests returned a 5xx status during the last 5 minutes."
+
+      - alert: FinCloudHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(fincloud_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FinCloud API p95 latency is above 1 second"
+          description: "95th percentile request latency has exceeded 1s for 5 minutes."
+
+      - alert: FinCloudDatabaseDown
+        expr: fincloud_db_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "FinCloud database is unreachable"
+          description: "The backend reports that MariaDB connectivity is down."
+
+      - alert: FinCloudStorageDown
+        expr: fincloud_storage_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "FinCloud object storage is unreachable"
+          description: "The backend reports that MinIO connectivity is down."
+
+      - alert: FinCloudHostHighCPU
+        expr: |
+          100 - (avg by (instance) (
+            rate(node_cpu_seconds_total{mode="idle"}[5m])
+          ) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FinCloud host CPU usage is above 85%"
+          description: "The Docker host CPU has been above 85% for 10 minutes."
+
+      - alert: FinCloudHostHighMemory
+        expr: |
+          100 * (1 - (
+            node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes
+          )) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FinCloud host memory usage is above 90%"
+          description: "The Docker host memory has been above 90% for 10 minutes."
+
+      - alert: FinCloudHostDiskLow
+        expr: |
+          100 * (
+            min by (instance) (
+              node_filesystem_avail_bytes{mountpoint=~"/|/mnt/docker-desktop-disk",fstype!~"tmpfs|overlay|9p|rootfs"}
+              / node_filesystem_size_bytes{mountpoint=~"/|/mnt/docker-desktop-disk",fstype!~"tmpfs|overlay|9p|rootfs"}
+            )
+          ) < 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FinCloud host disk space is below 10%"
+          description: "The main host filesystem (or the Docker Desktop disk) has less than 10% free space."
+
+      - alert: FinCloudNodeExporterDown
+        expr: up{job="node-exporter"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node Exporter is down"
+          description: "Prometheus cannot scrape host metrics for more than 2 minutes."
+
+      - alert: FinCloudCadvisorDown
+        expr: up{job="cadvisor"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "cAdvisor is down"
+          description: "Prometheus cannot scrape container metrics for more than 2 minutes."
+
+  # Backup freshness metrics come from node-exporter's textfile collector.
+  # scripts/backup.ps1 and scripts/backup.sh rewrite
+  # infra/node-exporter/textfile/fincloud_backup.prom on every attempt.
+  - name: fincloud-backup
+    interval: 60s
+    rules:
+      - alert: FinCloudBackupStale
+        expr: (time() - fincloud_backup_last_success_timestamp_seconds) > 93600
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "FinCloud backup is older than 26 hours"
+          description: "No successful backup for more than 26 hours (24h RPO + 2h grace). Check the scheduled backup task and the newest folder under backups/."
+
+      - alert: FinCloudBackupFailed
+        expr: fincloud_backup_last_attempt_success == 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "FinCloud backup attempt failed"
+          description: "The most recent backup attempt reported failure. Inspect backups/last-backup.txt and the run log of scripts/backup.ps1|backup.sh."
+
+      - alert: FinCloudBackupMetricsMissing
+        expr: absent(fincloud_backup_last_success_timestamp_seconds)
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "FinCloud backup metrics are missing"
+          description: "node-exporter has not exposed fincloud_backup.prom for 30 minutes. Verify the textfile volume mount and that the backup script can write to infra/node-exporter/textfile/."

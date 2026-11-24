@@ -1,19 +1,44 @@
 /**
  * FinCloud Reports View Module
- * Provides financial performance analytics, executive summary cards,
- * category spending ranks, CSV export engine, and printable PDF reports.
+ * Financial analytics backed by /api/reports, with CSV export from live data.
  */
 
 import { FinStore } from './store.js';
+import {
+  calculatePeriodDays,
+  calculateReportData as computeReportData
+} from './finance.js';
+
+function toInputDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function monthName(date) {
+  return date.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' });
+}
 
 export const ReportsModule = {
   selectedPeriod: 'this-month',
+  _transactions: [],
 
-  render() {
+  async render() {
     const container = document.getElementById('view-content');
     if (!container) return;
 
-    const data = this.calculateReportData();
+    const range = this.getPeriodRange();
+    const year = new Date().getFullYear();
+
+    const [expenseCategories, incomeCategories, transactions] = await Promise.all([
+      FinStore.loadCategoryReport({ type: 'expense', ...range }),
+      FinStore.loadCategoryReport({ type: 'income', ...range }),
+      FinStore.loadTransactions({ ...range, limit: 1000 })
+    ]);
+
+    this._transactions = transactions;
+    const data = this.calculateReportData(incomeCategories, expenseCategories);
 
     container.innerHTML = `
       <div class="reports-view">
@@ -28,8 +53,8 @@ export const ReportsModule = {
             <!-- Period Switcher -->
             <div class="period-pills">
               <button class="period-pill ${this.selectedPeriod === 'this-month' ? 'active' : ''}" data-period="this-month">Bulan Ini</button>
-              <button class="period-pill ${this.selectedPeriod === 'quarter' ? 'active' : ''}" data-period="quarter">Kuartal 4</button>
-              <button class="period-pill ${this.selectedPeriod === 'year' ? 'active' : ''}" data-period="year">Tahun 2026</button>
+              <button class="period-pill ${this.selectedPeriod === 'quarter' ? 'active' : ''}" data-period="quarter">Kuartal Ini</button>
+              <button class="period-pill ${this.selectedPeriod === 'year' ? 'active' : ''}" data-period="year">Tahun ${year}</button>
               <button class="period-pill ${this.selectedPeriod === 'all' ? 'active' : ''}" data-period="all">Semua</button>
             </div>
 
@@ -83,14 +108,14 @@ export const ReportsModule = {
               </h3>
               <span class="badge badge-expense">Beban Biaya</span>
             </div>
-            
+
             <div class="category-rank-list">
               ${data.expenseRanks.length === 0 ? '<p style="color:var(--text-muted); padding:1rem 0;">Tidak ada pengeluaran pada periode ini.</p>' : ''}
               ${data.expenseRanks.map(item => `
                 <div class="category-rank-item">
                   <div class="category-rank-meta">
                     <span class="category-rank-name">
-                      <span style="width:10px; height:10px; border-radius:50%; background:var(--expense-500);"></span>
+                      <span style="width:10px; height:10px; border-radius:50%; background:${item.color || 'var(--expense-500)'};"></span>
                       ${item.category} (${item.count}x)
                     </span>
                     <div class="category-rank-values">
@@ -122,7 +147,7 @@ export const ReportsModule = {
                 <div class="category-rank-item">
                   <div class="category-rank-meta">
                     <span class="category-rank-name">
-                      <span style="width:10px; height:10px; border-radius:50%; background:var(--income-500);"></span>
+                      <span style="width:10px; height:10px; border-radius:50%; background:${item.color || 'var(--income-500)'};"></span>
                       ${item.category} (${item.count}x)
                     </span>
                     <div class="category-rank-values">
@@ -186,88 +211,83 @@ export const ReportsModule = {
     this.bindEvents();
   },
 
-  getPeriodLabel() {
-    switch (this.selectedPeriod) {
-      case 'this-month': return 'Oktober 2026';
-      case 'quarter': return 'Kuartal 4 (Okt - Des 2026)';
-      case 'year': return 'Tahun Kalender 2026';
-      default: return 'Seluruh Waktu';
-    }
-  },
-
-  calculateReportData() {
-    let list = FinStore.getTransactions();
+  getPeriodRange() {
+    const now = new Date();
+    const year = now.getFullYear();
 
     if (this.selectedPeriod === 'this-month') {
-      list = list.filter(t => t.date.startsWith('2026-10'));
-    } else if (this.selectedPeriod === 'quarter') {
-      list = list.filter(t => t.date.startsWith('2026-10') || t.date.startsWith('2026-11') || t.date.startsWith('2026-12'));
-    } else if (this.selectedPeriod === 'year') {
-      list = list.filter(t => t.date.startsWith('2026'));
+      return {
+        startDate: toInputDate(new Date(year, now.getMonth(), 1)),
+        endDate: toInputDate(new Date(year, now.getMonth() + 1, 0))
+      };
     }
 
-    const incomeTx = list.filter(t => t.type === 'income');
-    const expenseTx = list.filter(t => t.type === 'expense');
+    if (this.selectedPeriod === 'quarter') {
+      const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      return {
+        startDate: toInputDate(new Date(year, quarterStartMonth, 1)),
+        endDate: toInputDate(new Date(year, quarterStartMonth + 3, 0))
+      };
+    }
 
-    const totalIncome = incomeTx.reduce((s, t) => s + t.amount, 0);
-    const totalExpense = expenseTx.reduce((s, t) => s + t.amount, 0);
-    const netSavings = totalIncome - totalExpense;
-    const savingsRatio = totalIncome > 0 ? Math.round((netSavings / totalIncome) * 100) : 0;
-    const avgDailyExpense = Math.round(totalExpense / 30);
+    if (this.selectedPeriod === 'year') {
+      return {
+        startDate: toInputDate(new Date(year, 0, 1)),
+        endDate: toInputDate(new Date(year, 11, 31))
+      };
+    }
 
-    // Group expense by category
-    const expenseGroups = {};
-    expenseTx.forEach(t => {
-      expenseGroups[t.category] = (expenseGroups[t.category] || { total: 0, count: 0 });
-      expenseGroups[t.category].total += t.amount;
-      expenseGroups[t.category].count += 1;
-    });
+    return {};
+  },
 
-    const expenseRanks = Object.keys(expenseGroups).map(cat => ({
-      category: cat,
-      type: 'expense',
-      total: expenseGroups[cat].total,
-      count: expenseGroups[cat].count,
-      percentage: totalExpense > 0 ? Math.round((expenseGroups[cat].total / totalExpense) * 100) : 0
-    })).sort((a, b) => b.total - a.total);
+  getPeriodLabel() {
+    const now = new Date();
+    const year = now.getFullYear();
 
-    // Group income by category
-    const incomeGroups = {};
-    incomeTx.forEach(t => {
-      incomeGroups[t.category] = (incomeGroups[t.category] || { total: 0, count: 0 });
-      incomeGroups[t.category].total += t.amount;
-      incomeGroups[t.category].count += 1;
-    });
+    if (this.selectedPeriod === 'this-month') {
+      return now.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+    }
 
-    const incomeRanks = Object.keys(incomeGroups).map(cat => ({
-      category: cat,
-      type: 'income',
-      total: incomeGroups[cat].total,
-      count: incomeGroups[cat].count,
-      percentage: totalIncome > 0 ? Math.round((incomeGroups[cat].total / totalIncome) * 100) : 0
-    })).sort((a, b) => b.total - a.total);
+    if (this.selectedPeriod === 'quarter') {
+      const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      const start = new Date(year, quarterStartMonth, 1);
+      const end = new Date(year, quarterStartMonth + 3, 0);
+      const quarter = Math.floor(now.getMonth() / 3) + 1;
 
-    return {
-      totalIncome,
-      totalExpense,
-      netSavings,
-      savingsRatio,
-      avgDailyExpense,
-      incomeCount: incomeTx.length,
-      expenseCount: expenseTx.length,
-      expenseRanks,
-      incomeRanks
-    };
+      return `Kuartal ${quarter} (${monthName(start)} - ${monthName(end)})`;
+    }
+
+    if (this.selectedPeriod === 'year') {
+      return `Tahun Kalender ${year}`;
+    }
+
+    return 'Seluruh Waktu';
+  },
+
+  getPeriodDays() {
+    const range = this.getPeriodRange();
+    return calculatePeriodDays(range.startDate, range.endDate);
+  },
+
+  calculateReportData(incomeCategories, expenseCategories) {
+    return computeReportData(incomeCategories, expenseCategories, this.getPeriodDays());
   },
 
   bindEvents() {
     // Period pills
     document.querySelectorAll('.period-pill').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         document.querySelectorAll('.period-pill').forEach(b => b.classList.remove('active'));
         e.currentTarget.classList.add('active');
         this.selectedPeriod = e.currentTarget.getAttribute('data-period');
-        this.render();
+
+        try {
+          await this.render();
+        } catch (error) {
+          if (error?.status !== 401) {
+            window.showToast(error.message || 'Gagal memuat laporan', 'error');
+          }
+        }
       });
     });
 
@@ -289,35 +309,40 @@ export const ReportsModule = {
   },
 
   exportToCSV() {
-    const list = FinStore.getTransactions();
-    if (list.length === 0) {
+    const list = this._transactions;
+
+    if (!list || list.length === 0) {
       window.showToast('Tidak ada transaksi untuk diekspor', 'error');
       return;
     }
 
-    let csvContent = 'data:text/csv;charset=utf-8,';
-    csvContent += 'ID Transaksi,Tanggal,Tipe,Kategori,Deskripsi,Nominal,Bukti Struk\r\n';
+    const lines = ['ID Transaksi,Tanggal,Tipe,Kategori,Deskripsi,Nominal,Bukti Struk'];
 
     list.forEach(t => {
-      const row = [
+      lines.push([
         t.id,
         t.date,
         t.type,
         `"${t.category}"`,
-        `"${t.description.replace(/"/g, '""')}"`,
+        `"${(t.description || '').replace(/"/g, '""')}"`,
         t.amount,
         t.receiptName || 'None'
-      ].join(',');
-      csvContent += row + '\r\n';
+      ].join(','));
     });
 
-    const encodedUri = encodeURI(csvContent);
+    // BOM keeps Excel happy with UTF-8 characters; Blob avoids URL length limits.
+    const blob = new Blob([`\ufeff${lines.join('\r\n')}`], {
+      type: 'text/csv;charset=utf-8;'
+    });
+    const objectUrl = URL.createObjectURL(blob);
+
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    link.setAttribute('href', objectUrl);
     link.setAttribute('download', `fincloud_laporan_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 
     window.showToast('Laporan CSV berhasil diunduh!', 'success');
   }
